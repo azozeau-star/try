@@ -10,6 +10,13 @@
             #sidebar { width: 300px; background: #111826; padding: 20px; border-left: 1px solid #1f2937; overflow-y: auto; }
             .user-btn { display: block; width: 100%; padding: 15px; margin-bottom: 8px; cursor: pointer; background: #1f2937; color: white; border: none; text-align: right; border-radius: 8px; font-family: 'Tajawal', sans-serif;}
             .user-btn:hover { background: #374151; }
+            .user-btn[aria-pressed="true"] { outline: 2px solid #38bdf8; }
+            .user-name { display: block; margin-bottom: 6px; font-weight: 700; }
+            .user-meta { display: block; color: #94a3b8; font-size: 12px; }
+            .presence-online { color: #4ade80; }
+            #chat-status, .sidebar-hint { color: #94a3b8; font-size: 13px; line-height: 1.6; }
+            #chat-area { min-width: 0; }
+            .send-btn:disabled { opacity: .45; cursor: default; }
             #chat-area { flex-grow: 1; padding: 20px; display: flex; flex-direction: column; }
             #chat { flex-grow: 1; background: #111826; border-radius: 12px; padding: 20px; overflow-y: auto; margin-bottom: 15px; }
             .msg { margin: 10px 0; padding: 12px; background: #1f2937; border-radius: 8px; white-space: pre-wrap; }
@@ -40,7 +47,8 @@
         </form>
         <div id="admin-interface" hidden style="display:flex; flex:1;">
             <div id="sidebar">
-                <h3>المستخدمين النشطين</h3>
+                <h3>كل المحادثات</h3>
+                <p class="sidebar-hint">المحادثات المحفوظة تظهر حتى بعد تسجيل خروج المستخدم.</p>
                 <div id="user-list"></div>
             </div>
             <div id="chat-area">
@@ -48,11 +56,12 @@
                     <h2 id="title">اختر مستخدم للبدء</h2>
                     <button class="send-btn" id="admin-logout" type="button">تسجيل الخروج</button>
                 </div>
+                <p id="chat-status" role="status" aria-live="polite">اختر محادثة لعرض الرسائل المحفوظة.</p>
                 <button id="takeover" style="display:none;">إيقاف الذكاء الاصطناعي (التحدث مباشرة)</button>
                 <div id="chat"></div>
                 <div class="controls">
                     <input type="text" id="input" placeholder="اكتب ردك هنا..." disabled onkeypress="handleKeyPress(event)">
-                    <button class="send-btn" onclick="send()">إرسال</button>
+                    <button class="send-btn" id="send-button" onclick="send()" disabled>إرسال</button>
                 </div>
             </div>
         </div>
@@ -64,6 +73,9 @@
             let activeUser = null;
             let activeUserName = '';
             let activeHumanTakeover = false;
+            let activeOnline = false;
+            const savedChats = new Map();
+            socket.on('disconnect', () => updateChatControls());
             socket.on('connect_error', () => {
                 document.getElementById('admin-error').textContent = 'تعذّر التحقق من جلسة المطور. سجّل الدخول مجدداً.';
                 socket.disconnect();
@@ -116,6 +128,7 @@
 
             function addUser(user) {
                 const { userId, displayName } = user;
+                savedChats.set(userId, user);
                 let button = document.getElementById('btn-' + userId);
                 if (!button) {
                     button = document.createElement('button');
@@ -124,11 +137,22 @@
                     button.addEventListener('click', () => loadChat(userId));
                     document.getElementById('user-list').appendChild(button);
                 }
-                button.textContent = (displayName || 'مستخدم') + ' · ' + userId.substring(0, 6);
+                const name = document.createElement('span');
+                name.className = 'user-name';
+                name.textContent = (displayName || 'مستخدم') + ' · ' + userId.substring(0, 6);
+                const meta = document.createElement('span');
+                meta.className = 'user-meta' + (user.online ? ' presence-online' : '');
+                meta.textContent = (user.online ? 'متصل الآن' : 'غير متصل') + ' · ' + (user.messageCount || 0) + ' رسالة';
+                button.replaceChildren(name, meta);
+                button.setAttribute('aria-pressed', String(activeUser === userId));
                 button.dataset.displayName = displayName || 'مستخدم';
                 if (activeUser === userId) {
                     activeUserName = button.dataset.displayName;
+                    activeOnline = user.online;
+                    activeHumanTakeover = Boolean(user.humanTakeover);
                     document.getElementById('title').innerText = 'محادثة مع: ' + activeUserName;
+                    setTakeoverButton(activeHumanTakeover);
+                    updateChatControls();
                 }
             }
 
@@ -153,49 +177,60 @@
                 chat.scrollTop = chat.scrollHeight;
             }
 
-            socket.on('active_users', (users) => {
+            socket.on('saved_chats', (users) => {
                 document.getElementById('user-list').replaceChildren();
-                activeUser = null;
-                document.getElementById('input').disabled = true;
-                document.getElementById('takeover').style.display = 'none';
-                document.getElementById('chat').replaceChildren();
-                document.getElementById('title').textContent = 'اختر مستخدم للبدء';
-                users.forEach(addUser);
+                savedChats.clear();
+                users.sort((a, b) => Number(b.online) - Number(a.online)).forEach(addUser);
+                if (activeUser && savedChats.has(activeUser)) socket.emit('load_admin_chat', activeUser);
+                else {
+                    activeUser = null;
+                    activeOnline = false;
+                    document.getElementById('chat').replaceChildren();
+                    document.getElementById('title').textContent = 'اختر مستخدم للبدء';
+                    updateChatControls();
+                }
+                if (!users.length) document.getElementById('user-list').textContent = 'لا توجد محادثات محفوظة بعد.';
             });
-            socket.on('new_user', addUser);
 
             socket.on('update_admin_chat', (data) => {
-                addUser({ userId: data.userId, displayName: data.displayName });
-                if(activeUser === data.userId) {
+                const userId = data.accountId || data.userId;
+                addUser({ ...savedChats.get(userId), userId, displayName: data.displayName, messageCount: data.messages.length });
+                if(activeUser === userId) {
                     renderMessages(data.messages);
                 }
             });
 
             socket.on('admin_chat_history', (data) => {
-                if(activeUser === data.userId) {
+                if(activeUser === (data.accountId || data.userId)) {
                     activeUserName = data.displayName || activeUserName;
+                    activeOnline = Boolean(data.online);
+                    setTakeoverButton(Boolean(data.humanTakeover));
+                    updateChatControls();
                     document.getElementById('title').innerText = 'محادثة مع: ' + activeUserName;
                     renderMessages(data.messages);
                 }
             });
 
             socket.on('admin_takeover_state', (data) => {
-                if (activeUser === data.userId) setTakeoverButton(data.humanTakeover);
+                const userId = data.accountId || data.userId;
+                const saved = savedChats.get(userId);
+                if (saved) saved.humanTakeover = data.humanTakeover;
+                if (activeUser === userId) setTakeoverButton(data.humanTakeover);
             });
 
-            socket.on('user_disconnected', (id) => {
-                const btn = document.getElementById('btn-'+id);
-                if(btn) btn.remove();
-                if (activeUser === id) {
-                    activeUser = null;
-                    activeUserName = '';
-                    activeHumanTakeover = false;
-                    document.getElementById('title').innerText = 'اختر مستخدم للبدء';
-                    document.getElementById('chat').replaceChildren();
-                    document.getElementById('input').disabled = true;
-                    document.getElementById('takeover').style.display = 'none';
-                }
-            });
+            function updateChatControls() {
+                const canReply = Boolean(activeUser && activeOnline && socket.connected);
+                const input = document.getElementById('input');
+                input.disabled = !canReply;
+                input.placeholder = canReply ? 'اكتب ردك هنا...' : 'عرض المحادثة المحفوظة';
+                document.getElementById('send-button').disabled = !canReply;
+                document.getElementById('takeover').style.display = canReply ? 'inline-block' : 'none';
+                document.getElementById('chat-status').textContent = !socket.connected
+                    ? 'انقطع اتصال لوحة المطور. جارٍ إعادة الاتصال...'
+                    : !activeUser ? 'اختر محادثة لعرض الرسائل المحفوظة.'
+                    : activeOnline ? 'المستخدم متصل الآن — يمكنك الرد مباشرة.'
+                    : 'المستخدم غير متصل — يمكنك قراءة المحادثة المحفوظة.';
+            }
 
             function setTakeoverButton(humanTakeover) {
                 activeHumanTakeover = humanTakeover;
@@ -209,17 +244,20 @@
 
             function loadChat(id) {
                 activeUser = id;
-                activeHumanTakeover = false;
+                const saved = savedChats.get(id);
+                activeOnline = Boolean(saved && saved.online);
+                activeHumanTakeover = Boolean(saved && saved.humanTakeover);
                 const button = document.getElementById('btn-' + id);
                 activeUserName = button ? button.dataset.displayName : 'مستخدم';
                 document.getElementById('title').innerText = 'محادثة مع: ' + activeUserName;
-                document.getElementById('input').disabled = false;
                 document.getElementById('chat').replaceChildren();
+                for (const button of document.querySelectorAll('.user-btn')) button.setAttribute('aria-pressed', String(button.id === 'btn-' + id));
+                updateChatControls();
                 socket.emit('load_admin_chat', id);
                 const takeover = document.getElementById('takeover');
-                takeover.style.display = 'inline-block';
                 setTakeoverButton(activeHumanTakeover);
                 takeover.onclick = () => {
+                    if (!activeOnline || !socket.connected) return;
                     const nextState = !activeHumanTakeover;
                     socket.emit('admin_set_takeover', { userId: id, enabled: nextState });
                 };
@@ -227,7 +265,7 @@
 
             function send() {
                 const input = document.getElementById('input');
-                if(!input.value || !activeUser || !socket.connected) return;
+                if(!input.value || !activeUser || !activeOnline || !socket.connected) return;
                 socket.emit('admin_message', { userId: activeUser, text: input.value });
                 input.value = '';
             }

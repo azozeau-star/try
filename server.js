@@ -309,6 +309,36 @@ async function getMedicalAIResponse(userMessage) {
     }
 }
 
+function adminChat(targetId) {
+    if (typeof targetId !== 'string') return null;
+    const connected = Object.hasOwn(activeChats, targetId) ? activeChats[targetId] : null;
+    const accountId = connected ? connected.accountId : targetId;
+    if (!Object.hasOwn(database.chats, accountId)) return null;
+    return {
+        accountId,
+        saved: database.chats[accountId],
+        connections: Object.entries(activeChats).filter(([, chat]) => chat.accountId === accountId)
+    };
+}
+
+function savedChatList() {
+    return Object.entries(database.chats).map(([accountId, saved]) => {
+        const chat = adminChat(accountId);
+        return {
+            userId: accountId,
+            displayName: saved.displayName,
+            online: chat.connections.length > 0,
+            messageCount: saved.messages.length,
+            humanTakeover: chat.connections.some(([, connected]) => connected.humanTakeover)
+        };
+    });
+}
+
+function broadcastChatList() {
+    // Only authenticated developer sockets join this room.
+    io.to('admins').emit('saved_chats', savedChatList());
+}
+
 io.on('connection', (socket) => {
     if (socket.role === 'admin') {
         socket.join('admins');
@@ -316,38 +346,48 @@ io.on('connection', (socket) => {
             userId,
             displayName: chat.displayName
         })));
+        socket.emit('saved_chats', savedChatList());
 
         socket.on('load_admin_chat', (userId) => {
-            const chat = activeChats[userId];
+            const chat = adminChat(userId);
             if (chat) {
-                socket.emit('admin_chat_history', { userId, displayName: chat.displayName, messages: chat.messages });
-                socket.emit('admin_takeover_state', { userId, humanTakeover: chat.humanTakeover });
+                const humanTakeover = chat.connections.some(([, connected]) => connected.humanTakeover);
+                socket.emit('admin_chat_history', {
+                    userId, accountId: chat.accountId, displayName: chat.saved.displayName,
+                    messages: chat.saved.messages, online: chat.connections.length > 0, humanTakeover
+                });
+                socket.emit('admin_takeover_state', { userId, accountId: chat.accountId, humanTakeover });
             }
         });
 
         socket.on('admin_set_takeover', (data) => {
             if (!data || typeof data.userId !== 'string' || typeof data.enabled !== 'boolean') return;
-            const chat = activeChats[data.userId];
-            if (!chat) return;
-            chat.humanTakeover = data.enabled;
+            const chat = adminChat(data.userId);
+            if (!chat || !chat.connections.length) return;
+            for (const [connectionId, connected] of chat.connections) {
+                connected.humanTakeover = data.enabled;
+                io.to(connectionId).emit('takeover_state', data.enabled);
+            }
             io.to('admins').emit('admin_takeover_state', {
                 userId: data.userId,
-                humanTakeover: chat.humanTakeover
+                accountId: chat.accountId,
+                humanTakeover: data.enabled
             });
         });
 
         socket.on('admin_message', (data) => {
             if (!data || typeof data.userId !== 'string' || typeof data.text !== 'string') return;
-            const chat = activeChats[data.userId];
-            if (!chat || !data.text.trim()) return;
+            const chat = adminChat(data.userId);
+            if (!chat || !chat.connections.length || !data.text.trim()) return;
             const message = { sender: 'Developer', text: data.text.trim().slice(0, 4000) };
-            chat.messages.push(message);
+            chat.saved.messages.push(message);
             persistDatabase();
-            io.to(data.userId).emit('receive_message', message);
+            for (const [connectionId] of chat.connections) io.to(connectionId).emit('receive_message', message);
             io.to('admins').emit('update_admin_chat', {
                 userId: data.userId,
-                displayName: chat.displayName,
-                messages: chat.messages
+                accountId: chat.accountId,
+                displayName: chat.saved.displayName,
+                messages: chat.saved.messages
             });
         });
         return;
@@ -360,12 +400,13 @@ io.on('connection', (socket) => {
         accountId: socket.accountId,
         displayName: socket.accountName,
         messages: savedChat.messages,
-        humanTakeover: false
+        humanTakeover: Object.values(activeChats).some((chat) => chat.accountId === socket.accountId && chat.humanTakeover)
     };
     persistDatabase();
     socket.emit('chat_history', savedChat.messages);
     socket.emit('takeover_state', activeChats[socket.id].humanTakeover);
     io.to('admins').emit('new_user', { userId: socket.id, displayName: socket.accountName });
+    broadcastChatList();
 
     socket.on('user_message', async (text) => {
         const userId = socket.id;
@@ -375,7 +416,7 @@ io.on('connection', (socket) => {
         const message = { sender: 'user', text: text.trim().slice(0, 4000) };
         chat.messages.push(message);
         persistDatabase();
-        io.to('admins').emit('update_admin_chat', { userId, displayName: chat.displayName, messages: chat.messages });
+        io.to('admins').emit('update_admin_chat', { userId, accountId: chat.accountId, displayName: chat.displayName, messages: chat.messages });
 
         if (!chat.humanTakeover) {
             const aiReply = await getMedicalAIResponse(message.text);
@@ -384,7 +425,7 @@ io.on('connection', (socket) => {
             persistDatabase();
 
             socket.emit('receive_message', reply);
-            io.to('admins').emit('update_admin_chat', { userId, displayName: chat.displayName, messages: chat.messages });
+            io.to('admins').emit('update_admin_chat', { userId, accountId: chat.accountId, displayName: chat.displayName, messages: chat.messages });
         }
     });
 
@@ -392,6 +433,7 @@ io.on('connection', (socket) => {
         if (activeChats[socket.id]) {
             io.to('admins').emit('user_disconnected', socket.id);
             delete activeChats[socket.id];
+            broadcastChatList();
         }
     });
 });

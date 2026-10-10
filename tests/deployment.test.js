@@ -163,6 +163,78 @@ test('deployment, authentication and persistence', async (t) => {
             assert.ok((await history).some((message) => message.text === 'Developer live response'));
         } finally { user.disconnect(); admin.disconnect(); }
     });
+    await t.test('developer can reopen saved history after sign-out and reconnect', async () => {
+        const account = await request('/api/signup', { name: 'Offline History', email: 'history@example.com', password: 'history-password' });
+        const accountId = account.body.user.id;
+        const adminLogin = await request('/api/admin/login', { password: 'test-admin-password' });
+        const admin = io(base, { autoConnect: false, transports: ['websocket'], auth: { token: adminLogin.body.sessionToken } });
+        const user = io(base, { autoConnect: false, transports: ['websocket'], auth: { token: account.body.sessionToken } });
+        function event(socket, name) {
+            return new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => reject(new Error('Timed out waiting for ' + name)), 5000);
+                socket.once(name, (value) => { clearTimeout(timeout); resolve(value); });
+            });
+        }
+        try {
+            let list = event(admin, 'saved_chats');
+            admin.connect();
+            const initial = await list;
+            assert.equal(initial.find((entry) => entry.userId === 'seed-user').online, false);
+            assert.equal(initial.find((entry) => entry.userId === accountId).online, false);
+            assert.equal(initial[0].messages, undefined); // History is sent only when selected.
+            list = event(admin, 'saved_chats');
+            const connected = event(user, 'chat_history');
+            user.connect();
+            await connected;
+            assert.equal((await list).find((entry) => entry.userId === accountId).online, true);
+            const state = event(admin, 'admin_takeover_state');
+            admin.emit('admin_set_takeover', { userId: accountId, enabled: true });
+            assert.equal((await state).humanTakeover, true);
+            const update = event(admin, 'update_admin_chat');
+            user.emit('user_message', 'Keep this saved conversation');
+            assert.equal((await update).accountId, accountId);
+            const reply = event(user, 'receive_message');
+            admin.emit('admin_message', { userId: accountId, text: 'Saved developer reply' });
+            assert.equal((await reply).text, 'Saved developer reply');
+            list = event(admin, 'saved_chats');
+            await request('/api/logout', {}, account.body.sessionToken);
+            const offline = (await list).find((entry) => entry.userId === accountId);
+            assert.equal(offline.online, false);
+            assert.equal(offline.messageCount, 2);
+            let history = event(admin, 'admin_chat_history');
+            admin.emit('load_admin_chat', accountId);
+            const saved = await history;
+            assert.equal(saved.online, false);
+            assert.deepEqual(saved.messages.map((message) => message.text), ['Keep this saved conversation', 'Saved developer reply']);
+            admin.disconnect();
+            list = event(admin, 'saved_chats');
+            admin.connect();
+            assert.equal((await list).find((entry) => entry.userId === accountId).online, false);
+            history = event(admin, 'admin_chat_history');
+            admin.emit('load_admin_chat', accountId);
+            assert.deepEqual((await history).messages, saved.messages);
+        } finally {
+            user.disconnect(); admin.disconnect();
+            await request('/api/logout', {}, adminLogin.body.sessionToken);
+        }
+    });
+    await t.test('saved developer conversations are unavailable to users and anonymous sockets', async () => {
+        const anonymous = io(base, { autoConnect: false, transports: ['websocket'], reconnection: false });
+        const user = io(base, { autoConnect: false, transports: ['websocket'], auth: { token } });
+        try {
+            const rejected = new Promise((resolve) => anonymous.once('connect_error', resolve));
+            anonymous.connect();
+            assert.match((await rejected).message, /Authentication/);
+            const connected = new Promise((resolve) => user.once('chat_history', resolve));
+            let exposed = false;
+            user.on('saved_chats', () => { exposed = true; });
+            user.on('admin_chat_history', () => { exposed = true; });
+            user.connect(); await connected;
+            user.emit('load_admin_chat', 'seed-user');
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            assert.equal(exposed, false);
+        } finally { anonymous.disconnect(); user.disconnect(); }
+    });
     await t.test('shared browser client restores cross-domain sessions without cookies', async () => {
         const stored = new Map();
         const clientSource = fs.readFileSync(path.join(__dirname, '../docs/client.js'), 'utf8');
