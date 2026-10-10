@@ -169,12 +169,13 @@ test('deployment, authentication and persistence', async (t) => {
             assert.ok((await history).some((message) => message.text === 'Developer live response'));
         } finally { user.disconnect(); admin.disconnect(); }
     });
-    await t.test('developer can reopen saved history after sign-out and reconnect', async () => {
+    await t.test('developer can reply after sign-out and user receives saved replies on return', async () => {
         const account = await request('/api/signup', { name: 'Offline History', email: 'history@example.com', password: 'history-password' });
         const accountId = account.body.user.id;
         const adminLogin = await request('/api/admin/login', { password: 'test-admin-password' });
         const admin = io(base, { autoConnect: false, transports: ['websocket'], auth: { token: adminLogin.body.sessionToken } });
         const user = io(base, { autoConnect: false, transports: ['websocket'], auth: { token: account.body.sessionToken } });
+        let returningToken;
         function event(socket, name) {
             return new Promise((resolve, reject) => {
                 const timeout = setTimeout(() => reject(new Error('Timed out waiting for ' + name)), 5000);
@@ -212,15 +213,35 @@ test('deployment, authentication and persistence', async (t) => {
             const saved = await history;
             assert.equal(saved.online, false);
             assert.deepEqual(saved.messages.map((message) => message.text), ['Keep this saved conversation', 'Saved developer reply']);
+            const offlineUpdate = event(admin, 'update_admin_chat');
+            const acknowledged = await new Promise((resolve, reject) => {
+                admin.timeout(5000).emit('admin_message', { userId: accountId, text: 'Reply while you are away' },
+                    (error, result) => error ? reject(error) : resolve(result));
+            });
+            assert.deepEqual(acknowledged, { success: true });
+            const updated = await offlineUpdate;
+            assert.equal(updated.summary.online, false);
+            assert.equal(updated.summary.messageCount, 3);
+            assert.equal(updated.messages[2].text, 'Reply while you are away');
+            const persisted = JSON.parse(fs.readFileSync(path.join(data, 'accounts.json'), 'utf8'));
+            assert.deepEqual(persisted.chats[accountId].messages, updated.messages);
             admin.disconnect();
             list = event(admin, 'saved_chats');
             admin.connect();
             assert.equal((await list).find((entry) => entry.userId === accountId).online, false);
             history = event(admin, 'admin_chat_history');
             admin.emit('load_admin_chat', accountId);
-            assert.deepEqual((await history).messages, saved.messages);
+            assert.deepEqual((await history).messages, updated.messages);
+            const login = await request('/api/login', { email: 'history@example.com', password: 'history-password' });
+            assert.equal(login.response.status, 200);
+            returningToken = login.body.sessionToken;
+            user.auth = { token: returningToken };
+            const returnedHistory = event(user, 'chat_history');
+            user.connect();
+            assert.deepEqual(await returnedHistory, updated.messages);
         } finally {
             user.disconnect(); admin.disconnect();
+            if (returningToken) await request('/api/logout', {}, returningToken);
             await request('/api/logout', {}, adminLogin.body.sessionToken);
         }
     });

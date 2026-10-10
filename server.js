@@ -436,13 +436,27 @@ io.on('connection', (socket) => {
             });
         });
 
-        socket.on('admin_message', (data) => {
-            if (!data || typeof data.userId !== 'string' || typeof data.text !== 'string') return;
+        socket.on('admin_message', (data, acknowledge) => {
+            const reply = (result) => { if (typeof acknowledge === 'function') acknowledge(result); };
+            if (!data || typeof data.userId !== 'string' || typeof data.text !== 'string' || !data.text.trim()) {
+                reply({ success: false, error: 'اختر محادثة واكتب رسالة.' });
+                return;
+            }
             const chat = adminChat(data.userId);
-            if (!chat || !chat.connections.length || !data.text.trim()) return;
+            if (!chat) {
+                reply({ success: false, error: 'المحادثة غير موجودة.' });
+                return;
+            }
             const message = { sender: 'Developer', text: data.text.trim().slice(0, 4000) };
             chat.saved.messages.push(message);
-            persistDatabase();
+            try {
+                persistDatabase();
+            } catch (error) {
+                chat.saved.messages.pop();
+                console.error('Failed to save developer reply:', error.message);
+                reply({ success: false, error: 'تعذر حفظ الرد. حاول مرة أخرى.' });
+                return;
+            }
             for (const [connectionId] of chat.connections) io.to(connectionId).emit('receive_message', message);
             io.to('admins').emit('update_admin_chat', {
                 userId: data.userId,
@@ -451,6 +465,7 @@ io.on('connection', (socket) => {
                 messages: chat.saved.messages,
                 summary: chatSummary(chat.accountId)
             });
+            reply({ success: true });
         });
         return;
     }

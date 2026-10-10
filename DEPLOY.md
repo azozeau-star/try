@@ -42,6 +42,8 @@ This hosts BOTH pages and the backend together; Netlify/GitHub Pages are optiona
 
 ### Developer visibility
 
+Developers can reply to saved conversations while users are offline. The server saves each reply before confirming it, delivers it immediately to any connected sessions, and includes it in the user's chat history on their next connection. The dashboard keeps the draft if saving fails or confirmation times out. AI takeover controls apply only while a user is online.
+
 The main conversation list hides accounts 14 days after their last successful sign-in. Signing in again returns an inactive account to the main list without changing its saved chat history. Older accounts without a recorded sign-in date get an initial 14-day window; optionally set `LOGIN_TRACKING_STARTED_AT` to the rollout timestamp in milliseconds to keep that baseline consistent when restoring old backups.
 
 Each visible user has a `حذف` button that only hides the user from the developer's main list. It does not delete the account, password, or messages, and does not block sign-in. Manually hidden users remain hidden after signing in and can be restored from the `المخفية` tab. Inactivity still applies after restoring a manually hidden account. Open dashboards refresh the inactivity filter every minute.

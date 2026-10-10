@@ -88,6 +88,7 @@
             let activeUserName = '';
             let activeHumanTakeover = false;
             let activeOnline = false;
+            let sending = false;
             const savedChats = new Map();
             let showHidden = false;
             for (const [id, hidden] of [['visible-tab', false], ['hidden-tab', true]]) {
@@ -294,17 +295,17 @@
             });
 
             function updateChatControls() {
-                const canReply = Boolean(activeUser && activeOnline && socket.connected);
+                const canReply = Boolean(activeUser && socket.connected);
                 const input = document.getElementById('input');
                 input.disabled = !canReply;
                 input.placeholder = canReply ? 'اكتب ردك هنا...' : 'عرض المحادثة المحفوظة';
-                document.getElementById('send-button').disabled = !canReply;
-                document.getElementById('takeover').style.display = canReply ? 'inline-block' : 'none';
+                document.getElementById('send-button').disabled = !canReply || sending;
+                document.getElementById('takeover').style.display = canReply && activeOnline ? 'inline-block' : 'none';
                 document.getElementById('chat-status').textContent = !socket.connected
                     ? 'انقطع اتصال لوحة المطور. جارٍ إعادة الاتصال...'
                     : !activeUser ? 'اختر محادثة لعرض الرسائل المحفوظة.'
                     : activeOnline ? 'المستخدم متصل الآن — يمكنك الرد مباشرة.'
-                    : 'المستخدم غير متصل — يمكنك قراءة المحادثة المحفوظة.';
+                    : 'المستخدم غير متصل — يمكنك الرد الآن، وسيظهر الرد في محادثته عند عودته.';
             }
 
             function setTakeoverButton(humanTakeover) {
@@ -340,9 +341,25 @@
 
             function send() {
                 const input = document.getElementById('input');
-                if(!input.value || !activeUser || !activeOnline || !socket.connected) return;
-                socket.emit('admin_message', { userId: activeUser, text: input.value });
-                input.value = '';
+                if (!input.value.trim() || !activeUser || !socket.connected || sending) return;
+                const userId = activeUser;
+                const text = input.value;
+                sending = true;
+                updateChatControls();
+                socket.timeout(10000).emit('admin_message', { userId, text }, (error, result) => {
+                    sending = false;
+                    updateChatControls();
+                    if (error || !result || !result.success) {
+                        document.getElementById('chat-status').textContent = error
+                            ? 'لم يصل تأكيد الحفظ. تحقق من سجل المحادثة قبل إعادة الإرسال؛ النص ما زال موجوداً.'
+                            : (result && result.error) || 'تعذر حفظ الرد. النص ما زال موجوداً.';
+                        return;
+                    }
+                    if (activeUser === userId && input.value === text) input.value = '';
+                    if (activeUser === userId) document.getElementById('chat-status').textContent = activeOnline
+                        ? 'تم حفظ الرد وإرساله للمستخدم.'
+                        : 'تم حفظ الرد — سيظهر للمستخدم عند عودته.';
+                });
             }
             
             function handleKeyPress(e) {
