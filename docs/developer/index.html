@@ -10,6 +10,15 @@
             #sidebar { width: 300px; background: #111826; padding: 20px; border-left: 1px solid #1f2937; overflow-y: auto; }
             .user-btn { display: block; width: 100%; padding: 15px; margin-bottom: 8px; cursor: pointer; background: #1f2937; color: white; border: none; text-align: right; border-radius: 8px; font-family: 'Tajawal', sans-serif;}
             .user-btn:hover { background: #374151; }
+            .user-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+            .user-row .user-btn { flex: 1; min-width: 0; margin-bottom: 0; }
+            .visibility-button, .list-tab { font: inherit; border: 1px solid #334155; border-radius: 8px; background: #111826; color: #fda4af; padding: 9px; cursor: pointer; }
+            .visibility-button.restore { color: #4ade80; }
+            .visibility-button:disabled { opacity: .45; cursor: default; }
+            .list-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+            .list-tab { flex: 1; color: #94a3b8; }
+            .list-tab[aria-pressed="true"] { border-color: #38bdf8; color: #38bdf8; }
+            #visibility-status { font-size: 12px; line-height: 1.6; color: #cbd5e1; }
             .user-btn[aria-pressed="true"] { outline: 2px solid #38bdf8; }
             .user-name { display: block; margin-bottom: 6px; font-weight: 700; }
             .user-meta { display: block; color: #94a3b8; font-size: 12px; }
@@ -30,7 +39,7 @@
             [hidden] { display: none !important; }
             @media (max-width: 640px) {
                 #admin-interface { flex-direction: column; }
-                #sidebar { width: auto; max-height: 150px; }
+                #sidebar { width: auto; max-height: 40vh; }
                 #chat-area { min-height: 0; padding: 12px; }
                 #chat { min-height: 180px; }
             }
@@ -47,8 +56,13 @@
         </form>
         <div id="admin-interface" hidden style="display:flex; flex:1;">
             <div id="sidebar">
-                <h3>كل المحادثات</h3>
-                <p class="sidebar-hint">المحادثات المحفوظة تظهر حتى بعد تسجيل خروج المستخدم.</p>
+                <h3>المحادثات</h3>
+                <p class="sidebar-hint">حذف المستخدم من اللوحة يخفيه فقط ويحفظ حسابه ورسائله. تُخفى الحسابات تلقائياً بعد 14 يوماً دون تسجيل دخول.</p>
+                <div class="list-tabs" aria-label="عرض المحادثات">
+                    <button class="list-tab" id="visible-tab" type="button" aria-pressed="true">الظاهرة</button>
+                    <button class="list-tab" id="hidden-tab" type="button" aria-pressed="false">المخفية</button>
+                </div>
+                <div id="visibility-status" role="status" aria-live="polite"></div>
                 <div id="user-list"></div>
             </div>
             <div id="chat-area">
@@ -75,6 +89,14 @@
             let activeHumanTakeover = false;
             let activeOnline = false;
             const savedChats = new Map();
+            let showHidden = false;
+            for (const [id, hidden] of [['visible-tab', false], ['hidden-tab', true]]) {
+                document.getElementById(id).addEventListener('click', () => {
+                    showHidden = hidden;
+                    activeUser = null;
+                    renderChatList();
+                });
+            }
             socket.on('disconnect', () => updateChatControls());
             socket.on('connect_error', () => {
                 document.getElementById('admin-error').textContent = 'تعذّر التحقق من جلسة المطور. سجّل الدخول مجدداً.';
@@ -128,22 +150,43 @@
 
             function addUser(user) {
                 const { userId, displayName } = user;
-                savedChats.set(userId, user);
                 let button = document.getElementById('btn-' + userId);
                 if (!button) {
                     button = document.createElement('button');
                     button.className = 'user-btn';
                     button.id = 'btn-' + userId;
                     button.addEventListener('click', () => loadChat(userId));
-                    document.getElementById('user-list').appendChild(button);
+                    const row = document.createElement('div');
+                    row.className = 'user-row';
+                    row.appendChild(button);
+                    if (!user.hidden || user.hiddenReason === 'manual') {
+                        const action = document.createElement('button');
+                        action.type = 'button';
+                        action.className = 'visibility-button' + (user.hidden ? ' restore' : '');
+                        action.textContent = user.hidden ? 'استعادة' : 'حذف';
+                        action.title = user.hidden ? 'إعادة المستخدم إلى اللوحة' : 'إخفاء من اللوحة فقط مع حفظ الحساب والرسائل';
+                        action.setAttribute('aria-label', (user.hidden ? 'استعادة ' : 'حذف من اللوحة: ') + (displayName || 'مستخدم'));
+                        action.addEventListener('click', () => setUserVisibility(userId, !user.hidden, action));
+                        row.appendChild(action);
+                    }
+                    document.getElementById('user-list').appendChild(row);
                 }
                 const name = document.createElement('span');
                 name.className = 'user-name';
                 name.textContent = (displayName || 'مستخدم') + ' · ' + userId.substring(0, 6);
                 const meta = document.createElement('span');
                 meta.className = 'user-meta' + (user.online ? ' presence-online' : '');
-                meta.textContent = (user.online ? 'متصل الآن' : 'غير متصل') + ' · ' + (user.messageCount || 0) + ' رسالة';
+                const state = user.hiddenReason === 'manual' ? 'مخفي يدوياً'
+                    : user.hiddenReason === 'inactive' ? 'لم يسجل الدخول منذ 14 يوماً'
+                    : user.online ? 'متصل الآن' : 'غير متصل';
+                meta.textContent = state + ' · ' + (user.messageCount || 0) + ' رسالة';
                 button.replaceChildren(name, meta);
+                if (user.lastLoginAt) {
+                    const lastLogin = document.createElement('span');
+                    lastLogin.className = 'user-meta';
+                    lastLogin.textContent = 'آخر دخول: ' + new Intl.DateTimeFormat('ar-SA-u-ca-gregory', { dateStyle: 'short' }).format(user.lastLoginAt);
+                    button.appendChild(lastLogin);
+                }
                 button.setAttribute('aria-pressed', String(activeUser === userId));
                 button.dataset.displayName = displayName || 'مستخدم';
                 if (activeUser === userId) {
@@ -177,11 +220,18 @@
                 chat.scrollTop = chat.scrollHeight;
             }
 
-            socket.on('saved_chats', (users) => {
+            function renderChatList(reloadHistory = false) {
                 document.getElementById('user-list').replaceChildren();
-                savedChats.clear();
+                const all = Array.from(savedChats.values());
+                document.getElementById('visible-tab').textContent = 'الظاهرة (' + all.filter((user) => !user.hidden).length + ')';
+                document.getElementById('hidden-tab').textContent = 'المخفية (' + all.filter((user) => user.hidden).length + ')';
+                document.getElementById('visible-tab').setAttribute('aria-pressed', String(!showHidden));
+                document.getElementById('hidden-tab').setAttribute('aria-pressed', String(showHidden));
+                const users = all.filter((user) => Boolean(user.hidden) === showHidden);
                 users.sort((a, b) => Number(b.online) - Number(a.online)).forEach(addUser);
-                if (activeUser && savedChats.has(activeUser)) socket.emit('load_admin_chat', activeUser);
+                if (activeUser && users.some((user) => user.userId === activeUser)) {
+                    if (reloadHistory) socket.emit('load_admin_chat', activeUser);
+                }
                 else {
                     activeUser = null;
                     activeOnline = false;
@@ -189,16 +239,41 @@
                     document.getElementById('title').textContent = 'اختر مستخدم للبدء';
                     updateChatControls();
                 }
-                if (!users.length) document.getElementById('user-list').textContent = 'لا توجد محادثات محفوظة بعد.';
+                if (!users.length) document.getElementById('user-list').textContent = showHidden ? 'لا توجد محادثات مخفية.' : 'لا توجد محادثات ظاهرة.';
+            }
+
+            socket.on('developer_chats', (lists) => {
+                savedChats.clear();
+                for (const user of [...lists.visible, ...lists.hidden]) savedChats.set(user.userId, user);
+                renderChatList(true);
             });
 
             socket.on('update_admin_chat', (data) => {
                 const userId = data.accountId || data.userId;
-                addUser({ ...savedChats.get(userId), userId, displayName: data.displayName, messageCount: data.messages.length });
+                savedChats.set(userId, data.summary || { ...savedChats.get(userId), userId, displayName: data.displayName, messageCount: data.messages.length });
+                renderChatList();
                 if(activeUser === userId) {
                     renderMessages(data.messages);
                 }
             });
+
+            function setUserVisibility(userId, hidden, button) {
+                const status = document.getElementById('visibility-status');
+                if (!socket.connected) {
+                    status.textContent = 'تعذّر حفظ التغيير بسبب انقطاع الاتصال.';
+                    return;
+                }
+                button.disabled = true;
+                status.textContent = 'جارٍ حفظ التغيير...';
+                socket.timeout(10000).emit('admin_set_user_visibility', { userId, hidden }, (error, result) => {
+                    button.disabled = false;
+                    status.textContent = error ? 'تعذّر حفظ التغيير. حاول مجدداً.'
+                        : !result || !result.success ? (result && result.error) || 'تعذّر حفظ التغيير.'
+                        : result.stillInactive ? 'أُلغي الإخفاء اليدوي. سيظهر المستخدم عند تسجيل دخوله مجدداً.'
+                        : hidden ? 'أُخفي المستخدم من اللوحة. حسابه ورسائله محفوظة.'
+                        : 'أُعيد المستخدم إلى اللوحة.';
+                });
+            }
 
             socket.on('admin_chat_history', (data) => {
                 if(activeUser === (data.accountId || data.userId)) {

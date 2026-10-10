@@ -95,6 +95,25 @@ function persistDatabase() {
     fs.renameSync(tempFile, DATA_FILE);
 }
 
+const INACTIVE_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
+// Older accounts have no sign-in timestamp; start their first 14-day window at rollout.
+const configuredTrackingStart = Number(process.env.LOGIN_TRACKING_STARTED_AT);
+const trackingStartedAt = Number.isFinite(configuredTrackingStart) && configuredTrackingStart > 0
+    ? configuredTrackingStart : Date.now();
+let migratedLoginDates = false;
+for (const user of database.users) {
+    if (!Number.isFinite(user.lastLoginAt) || user.lastLoginAt <= 0) {
+        user.lastLoginAt = trackingStartedAt;
+        migratedLoginDates = true;
+    }
+}
+if (migratedLoginDates) persistDatabase();
+
+function hiddenReason(user, now = Date.now()) {
+    if (user.developerHidden === true) return 'manual';
+    return now - user.lastLoginAt >= INACTIVE_AFTER_MS ? 'inactive' : null;
+}
+
 const activeChats = {};
 function sessionFromToken(token) {
     if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) return null;
@@ -200,11 +219,12 @@ app.post('/api/signup', async (req, res, next) => {
         if (database.users.some((user) => user.email === email)) {
             return res.status(409).json({ error: 'يوجد حساب بهذا البريد الإلكتروني. سجّل الدخول بدلاً من ذلك.' });
         }
-        const user = { id: randomBytes(16).toString('hex'), name, email, salt, passwordHash: hash };
+        const user = { id: randomBytes(16).toString('hex'), name, email, salt, passwordHash: hash, lastLoginAt: Date.now() };
         database.users.push(user);
         database.chats[user.id] = { displayName: name, messages: [] };
         persistDatabase();
         createSession(res, { role: 'user', userId: user.id });
+        broadcastChatList();
         return res.status(201).json({ authenticated: true, role: 'user', user: publicUser(user), sessionToken: res.locals.sessionToken });
     } catch (error) {
         return next(error);
@@ -224,7 +244,9 @@ app.post('/api/login', async (req, res, next) => {
             return res.status(401).json({ error: 'البريد الإلكتروني أو كلمة المرور غير صحيحة.' });
         }
         failedLoginAttempts.delete(attemptKey);
+        user.lastLoginAt = Date.now();
         createSession(res, { role: 'user', userId: user.id });
+        broadcastChatList();
         return res.json({ authenticated: true, role: 'user', user: publicUser(user), sessionToken: res.locals.sessionToken });
     } catch (error) {
         return next(error);
@@ -321,23 +343,39 @@ function adminChat(targetId) {
     };
 }
 
-function savedChatList() {
-    return Object.entries(database.chats).map(([accountId, saved]) => {
-        const chat = adminChat(accountId);
-        return {
-            userId: accountId,
-            displayName: saved.displayName,
-            online: chat.connections.length > 0,
-            messageCount: saved.messages.length,
-            humanTakeover: chat.connections.some(([, connected]) => connected.humanTakeover)
-        };
-    });
+function chatSummary(accountId) {
+    const chat = adminChat(accountId);
+    const user = database.users.find((entry) => entry.id === accountId);
+    if (!chat || !user) return null;
+    const reason = hiddenReason(user);
+    return {
+        userId: accountId,
+        displayName: chat.saved.displayName,
+        online: chat.connections.length > 0,
+        messageCount: chat.saved.messages.length,
+        humanTakeover: chat.connections.some(([, connected]) => connected.humanTakeover),
+        lastLoginAt: user.lastLoginAt,
+        hidden: Boolean(reason),
+        hiddenReason: reason
+    };
+}
+
+function developerChatLists() {
+    const all = Object.keys(database.chats).map(chatSummary).filter(Boolean);
+    return { visible: all.filter((chat) => !chat.hidden), hidden: all.filter((chat) => chat.hidden) };
 }
 
 function broadcastChatList() {
     // Only authenticated developer sockets join this room.
-    io.to('admins').emit('saved_chats', savedChatList());
+    const lists = developerChatLists();
+    io.to('admins').emit('saved_chats', lists.visible);
+    io.to('admins').emit('developer_chats', lists);
 }
+
+// Refresh open dashboards as the inactivity window expires, without deleting records.
+setInterval(() => {
+    if (io.sockets.adapter.rooms.get('admins')?.size) broadcastChatList();
+}, 60 * 1000).unref();
 
 io.on('connection', (socket) => {
     if (socket.role === 'admin') {
@@ -346,7 +384,30 @@ io.on('connection', (socket) => {
             userId,
             displayName: chat.displayName
         })));
-        socket.emit('saved_chats', savedChatList());
+        const lists = developerChatLists();
+        socket.emit('saved_chats', lists.visible);
+        socket.emit('developer_chats', lists);
+
+        socket.on('admin_set_user_visibility', (data, acknowledge) => {
+            const reply = (value) => { if (typeof acknowledge === 'function') acknowledge(value); };
+            if (!data || typeof data.userId !== 'string' || typeof data.hidden !== 'boolean') {
+                return reply({ success: false, error: 'الطلب غير صالح.' });
+            }
+            const user = database.users.find((entry) => entry.id === data.userId);
+            if (!user) return reply({ success: false, error: 'المستخدم غير موجود.' });
+            // This only changes dashboard visibility. Passwords and chats remain intact.
+            const previous = user.developerHidden;
+            user.developerHidden = data.hidden;
+            try {
+                persistDatabase();
+            } catch {
+                if (previous === undefined) delete user.developerHidden;
+                else user.developerHidden = previous;
+                return reply({ success: false, error: 'تعذّر حفظ التغيير. حاول مجدداً.' });
+            }
+            broadcastChatList();
+            reply({ success: true, stillInactive: hiddenReason(user) === 'inactive' });
+        });
 
         socket.on('load_admin_chat', (userId) => {
             const chat = adminChat(userId);
@@ -387,7 +448,8 @@ io.on('connection', (socket) => {
                 userId: data.userId,
                 accountId: chat.accountId,
                 displayName: chat.saved.displayName,
-                messages: chat.saved.messages
+                messages: chat.saved.messages,
+                summary: chatSummary(chat.accountId)
             });
         });
         return;
@@ -416,7 +478,7 @@ io.on('connection', (socket) => {
         const message = { sender: 'user', text: text.trim().slice(0, 4000) };
         chat.messages.push(message);
         persistDatabase();
-        io.to('admins').emit('update_admin_chat', { userId, accountId: chat.accountId, displayName: chat.displayName, messages: chat.messages });
+        io.to('admins').emit('update_admin_chat', { userId, accountId: chat.accountId, displayName: chat.displayName, messages: chat.messages, summary: chatSummary(chat.accountId) });
 
         if (!chat.humanTakeover) {
             const aiReply = await getMedicalAIResponse(message.text);
@@ -425,7 +487,7 @@ io.on('connection', (socket) => {
             persistDatabase();
 
             socket.emit('receive_message', reply);
-            io.to('admins').emit('update_admin_chat', { userId, accountId: chat.accountId, displayName: chat.displayName, messages: chat.messages });
+            io.to('admins').emit('update_admin_chat', { userId, accountId: chat.accountId, displayName: chat.displayName, messages: chat.messages, summary: chatSummary(chat.accountId) });
         }
     });
 

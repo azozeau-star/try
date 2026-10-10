@@ -21,8 +21,14 @@ test('deployment, authentication and persistence', async (t) => {
     const origin = 'https://example.github.io';
     const seed = {
         users: [{ id: 'seed-user', name: 'Existing User', email: 'existing@example.com', salt: 'seed-salt',
-            passwordHash: scryptSync('existing-password', 'seed-salt', 64).toString('hex') }],
-        chats: { 'seed-user': { displayName: 'Existing User', messages: [{ sender: 'user', text: 'Saved question' }] } },
+            passwordHash: scryptSync('existing-password', 'seed-salt', 64).toString('hex'), lastLoginAt: Date.now() },
+            { id: 'inactive-user', name: 'Inactive User', email: 'inactive@example.com', salt: 'inactive-salt',
+                passwordHash: scryptSync('inactive-password', 'inactive-salt', 64).toString('hex'),
+                lastLoginAt: Date.now() - 15 * 24 * 60 * 60 * 1000 }],
+        chats: {
+            'seed-user': { displayName: 'Existing User', messages: [{ sender: 'user', text: 'Saved question' }] },
+            'inactive-user': { displayName: 'Inactive User', messages: [{ sender: 'user', text: 'Older saved question' }] }
+        },
         sessions: [{ tokenHash: 'old-session', expiresAt: Date.now() + 100000 }]
     };
     let child;
@@ -231,9 +237,92 @@ test('deployment, authentication and persistence', async (t) => {
             user.on('admin_chat_history', () => { exposed = true; });
             user.connect(); await connected;
             user.emit('load_admin_chat', 'seed-user');
+            user.emit('admin_set_user_visibility', { userId: 'seed-user', hidden: true });
             await new Promise((resolve) => setTimeout(resolve, 100));
             assert.equal(exposed, false);
+            const disk = JSON.parse(fs.readFileSync(path.join(data, 'accounts.json'), 'utf8'));
+            assert.notEqual(disk.users.find((entry) => entry.id === 'seed-user').developerHidden, true);
         } finally { anonymous.disconnect(); user.disconnect(); }
+    });
+    await t.test('inactivity and manual hiding change only developer visibility', async () => {
+        const adminLogin = await request('/api/admin/login', { password: 'test-admin-password' });
+        const admin = io(base, { autoConnect: false, transports: ['websocket'], auth: { token: adminLogin.body.sessionToken } });
+        let user;
+        let userToken;
+        const expectedHistory = [...seed.chats['inactive-user'].messages];
+        function event(socket, name) {
+            return new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => reject(new Error('Timed out waiting for ' + name)), 5000);
+                socket.once(name, (value) => { clearTimeout(timeout); resolve(value); });
+            });
+        }
+        function visibility(hidden) {
+            return new Promise((resolve, reject) => {
+                admin.timeout(3000).emit('admin_set_user_visibility', { userId: 'inactive-user', hidden }, (error, result) => {
+                    if (error) reject(error); else resolve(result);
+                });
+            });
+        }
+        try {
+            let list = event(admin, 'developer_chats');
+            admin.connect();
+            const initial = await list;
+            assert.equal(initial.visible.some((entry) => entry.userId === 'inactive-user'), false);
+            assert.equal(initial.hidden.find((entry) => entry.userId === 'inactive-user').hiddenReason, 'inactive');
+            list = event(admin, 'developer_chats');
+            const login = await request('/api/login', { email: 'inactive@example.com', password: 'inactive-password' });
+            userToken = login.body.sessionToken;
+            assert.equal(login.response.status, 200);
+            assert.equal((await list).visible.some((entry) => entry.userId === 'inactive-user'), true);
+            user = io(base, { autoConnect: false, transports: ['websocket'], auth: { token: userToken } });
+            const history = event(user, 'chat_history');
+            const onlineList = event(admin, 'developer_chats');
+            user.connect();
+            assert.deepEqual(await history, seed.chats['inactive-user'].messages);
+            await onlineList;
+            const takeover = event(admin, 'admin_takeover_state');
+            admin.emit('admin_set_takeover', { userId: 'inactive-user', enabled: true });
+            assert.equal((await takeover).humanTakeover, true);
+            list = event(admin, 'developer_chats');
+            assert.equal((await visibility(true)).success, true);
+            assert.equal((await list).visible.some((entry) => entry.userId === 'inactive-user'), false);
+            const hiddenUpdate = event(admin, 'update_admin_chat');
+            user.emit('user_message', 'A hidden account still keeps its messages');
+            const updated = await hiddenUpdate;
+            assert.equal(updated.summary.hidden, true);
+            assert.equal(updated.summary.hiddenReason, 'manual');
+            expectedHistory.push({ sender: 'user', text: 'A hidden account still keeps its messages' });
+            const disk = JSON.parse(fs.readFileSync(path.join(data, 'accounts.json'), 'utf8'));
+            const savedUser = disk.users.find((entry) => entry.id === 'inactive-user');
+            assert.equal(savedUser.developerHidden, true);
+            assert.equal(savedUser.passwordHash, seed.users[1].passwordHash);
+            assert.deepEqual(disk.chats['inactive-user'].messages, expectedHistory);
+            list = event(admin, 'developer_chats');
+            const signedInAgain = await request('/api/login', { email: 'inactive@example.com', password: 'inactive-password' });
+            assert.equal(signedInAgain.response.status, 200);
+            assert.equal((await list).hidden.find((entry) => entry.userId === 'inactive-user').hiddenReason, 'manual');
+            await request('/api/logout', {}, signedInAgain.body.sessionToken);
+            user.disconnect(); admin.disconnect();
+            await stop(); await start();
+            list = event(admin, 'developer_chats');
+            admin.connect();
+            assert.equal((await list).hidden.find((entry) => entry.userId === 'inactive-user').hiddenReason, 'manual');
+            const saved = event(admin, 'admin_chat_history');
+            admin.emit('load_admin_chat', 'inactive-user');
+            assert.deepEqual((await saved).messages, expectedHistory);
+            const stillAccessible = event(user, 'chat_history');
+            const hiddenOnlineList = event(admin, 'developer_chats');
+            user.connect();
+            assert.deepEqual(await stillAccessible, expectedHistory);
+            await hiddenOnlineList;
+            list = event(admin, 'developer_chats');
+            assert.equal((await visibility(false)).success, true);
+            assert.equal((await list).visible.some((entry) => entry.userId === 'inactive-user'), true);
+        } finally {
+            if (user) user.disconnect(); admin.disconnect();
+            if (userToken) await request('/api/logout', {}, userToken);
+            await request('/api/logout', {}, adminLogin.body.sessionToken);
+        }
     });
     await t.test('shared browser client restores cross-domain sessions without cookies', async () => {
         const stored = new Map();

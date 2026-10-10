@@ -36,9 +36,17 @@ This hosts BOTH pages and the backend together; Netlify/GitHub Pages are optiona
    - User website: `https://YOUR-SERVICE.onrender.com/`
    - Developer page: `https://YOUR-SERVICE.onrender.com/developer/`
    - Health check: `https://YOUR-SERVICE.onrender.com/api/health`
-6. Create a user account on the user website. Sign in to `/developer/` with `ADMIN_PASSWORD`. These are separate roles. The dashboard shows users while they are connected to chat. For testing, use a second browser, browser profile, or private window for the developer, so the two logins do not overwrite the same cookie.
+6. Create a user account on the user website. Sign in to `/developer/` with `ADMIN_PASSWORD`. These are separate roles. The dashboard shows saved conversations even after users sign out. For testing, use a second browser, browser profile, or private window for the developer, so the two logins do not overwrite the same cookie.
 
-`render.yaml` is an optional Blueprint alternative; manual Web Service setup above is sufficient. No hosting account or live deployment was configured automatically in this fix.
+`render.yaml` is an optional Blueprint alternative; manual Web Service setup above is sufficient.
+
+### Developer visibility
+
+The main conversation list hides accounts 14 days after their last successful sign-in. Signing in again returns an inactive account to the main list without changing its saved chat history. Older accounts without a recorded sign-in date get an initial 14-day window; optionally set `LOGIN_TRACKING_STARTED_AT` to the rollout timestamp in milliseconds to keep that baseline consistent when restoring old backups.
+
+Each visible user has a `حذف` button that only hides the user from the developer's main list. It does not delete the account, password, or messages, and does not block sign-in. Manually hidden users remain hidden after signing in and can be restored from the `المخفية` tab. Inactivity still applies after restoring a manually hidden account. Open dashboards refresh the inactivity filter every minute.
+
+Sign-in dates and visibility settings are stored in the same account database as the chats and require persistent storage to survive instance replacement.
 
 ### Keep accounts and chats after redeployment
 
