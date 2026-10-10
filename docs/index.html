@@ -210,6 +210,7 @@
             .nav-item span { display: block; margin-bottom: 3px; font-size: 15px; }
             .nav-item.active { color: var(--blue-bright); font-weight: 800; }
             .auth-screen {
+                position: relative;
                 width: min(440px, calc(100% - 28px));
                 margin: min(12vh, 100px) auto 40px;
                 padding: 28px;
@@ -235,6 +236,18 @@
             .auth-form input:focus { border-color: var(--blue); }
             .auth-error { min-height: 24px; color: #ff9a9a; }
             .auth-switch { width: 100%; margin-top: 14px; padding: 9px; border: 0; color: #64cfff; background: transparent; cursor: pointer; }
+            .developer-entry {
+                position: absolute;
+                right: 4px;
+                bottom: 4px;
+                width: 44px;
+                height: 44px;
+                border: 0;
+                border-radius: 12px;
+                background: transparent;
+                text-decoration: none;
+            }
+            .developer-entry:focus-visible { outline: 2px solid var(--blue); outline-offset: -4px; }
             .user-account { color: var(--muted); font-size: 12px; }
             .logout-button { min-width: 0; }
             body[data-theme="light"] .auth-screen { border-color: #d4e0e8; background: #fff; box-shadow: 0 20px 70px #18304818; }
@@ -349,8 +362,8 @@
                 <button class="primary-button" id="auth-submit" type="submit">تسجيل الدخول</button>
             </form>
             <button class="auth-switch" id="auth-switch" type="button">ليس لديك حساب؟ أنشئ حساباً</button>
-            <p class="auth-help"><a href="./developer/">دخول المطور</a></p>
             <p class="auth-help">محادثاتك محفوظة في حسابك. كلمة المرور لا تُخزّن كنص مكشوف.</p>
+            <a class="developer-entry" href="./developer/" aria-label="دخول المطور"></a>
         </section>
         <header class="topbar" id="app-header" hidden>
             <div class="brand">
