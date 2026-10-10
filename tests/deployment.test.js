@@ -8,6 +8,7 @@ const path = require('node:path');
 const net = require('node:net');
 const io = require('../docs/assets/socket.io.min.js');
 const vm = require('node:vm');
+const { scryptSync } = require('node:crypto');
 
 test('deployment, authentication and persistence', async (t) => {
     const data = fs.mkdtempSync(path.join(os.tmpdir(), 'sami-test-'));
@@ -18,12 +19,19 @@ test('deployment, authentication and persistence', async (t) => {
     await new Promise((resolve) => reservation.close(resolve));
     const base = `http://127.0.0.1:${port}`;
     const origin = 'https://example.github.io';
+    const seed = {
+        users: [{ id: 'seed-user', name: 'Existing User', email: 'existing@example.com', salt: 'seed-salt',
+            passwordHash: scryptSync('existing-password', 'seed-salt', 64).toString('hex') }],
+        chats: { 'seed-user': { displayName: 'Existing User', messages: [{ sender: 'user', text: 'Saved question' }] } },
+        sessions: [{ tokenHash: 'old-session', expiresAt: Date.now() + 100000 }]
+    };
     let child;
     async function start() {
         child = spawn(process.execPath, ['server.js'], {
             cwd: path.join(__dirname, '..'),
             env: { ...process.env, PORT: String(port), DATA_DIRECTORY: data, GROQ_API_KEY: '',
-                ADMIN_PASSWORD: 'test-admin-password', STATIC_SITE_ORIGIN: origin + ',https://example.netlify.app' },
+                ADMIN_PASSWORD: 'test-admin-password', STATIC_SITE_ORIGIN: origin + ',https://example.netlify.app',
+                INITIAL_DATA_JSON: JSON.stringify(seed) },
             stdio: ['ignore', 'pipe', 'pipe']
         });
         await new Promise((resolve, reject) => {
@@ -54,6 +62,24 @@ test('deployment, authentication and persistence', async (t) => {
         return { response, body: await response.json() };
     }
     let token;
+    await t.test('private seed restores passwords and history but discards old sessions', async () => {
+        const saved = JSON.parse(fs.readFileSync(path.join(data, 'accounts.json'), 'utf8'));
+        assert.deepEqual(saved.users, seed.users);
+        assert.deepEqual(saved.chats, seed.chats);
+        assert.deepEqual(saved.sessions, []);
+        const login = await request('/api/login', { email: 'existing@example.com', password: 'existing-password' });
+        assert.equal(login.response.status, 200);
+        const user = io(base, { autoConnect: false, transports: ['websocket'], auth: { token: login.body.sessionToken } });
+        try {
+            const history = new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => reject(new Error('Seed history timed out')), 5000);
+                user.once('chat_history', (messages) => { clearTimeout(timeout); resolve(messages); });
+            });
+            user.connect();
+            assert.deepEqual(await history, seed.chats['seed-user'].messages);
+        } finally { user.disconnect(); }
+        await request('/api/logout', {}, login.body.sessionToken);
+    });
     await t.test('public pages and assets resolve, including developer page', async () => {
         for (const route of ['/', '/developer/', '/client.js', '/config.js', '/assets/socket.io.min.js', '/assets/doctor-portrait.png']) {
             assert.equal((await fetch(base + route)).status, 200, route);

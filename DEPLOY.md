@@ -44,6 +44,8 @@ This hosts BOTH pages and the backend together; Netlify/GitHub Pages are optiona
 
 The app still uses a JSON file, not a managed database. Render's free service has ephemeral storage: accounts/chats can disappear after redeployment or replacement of the instance.
 
+To restore an existing account backup on an empty instance, set `INITIAL_DATA_JSON` privately in the backend's environment to the JSON account database. Never commit this value, password hashes, or chat history to GitHub. The server preserves existing files, imports the backup only when the data file is absent, and discards old sessions so users must sign in again. This restores the original snapshot after a reset; newer accounts and messages still require persistent storage.
+
 For this single-instance project, attach a persistent disk on a Render plan that supports it:
 - Mount path: `/opt/render/project/src/storage`
 - Environment variable: `DATA_DIRECTORY=/opt/render/project/src/storage`

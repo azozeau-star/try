@@ -67,6 +67,26 @@ if (fs.existsSync(DATA_FILE)) {
         throw new Error('The account database has an invalid format.');
     }
     if (!Array.isArray(database.sessions)) database.sessions = [];
+} else if (process.env.INITIAL_DATA_JSON) {
+    // Private deployment seed only: never publish account records in the repository.
+    let snapshot;
+    try {
+        snapshot = JSON.parse(process.env.INITIAL_DATA_JSON);
+    } catch {
+        throw new Error('INITIAL_DATA_JSON is not valid JSON.');
+    }
+    if (!snapshot || !Array.isArray(snapshot.users) || !snapshot.chats ||
+        typeof snapshot.chats !== 'object' || Array.isArray(snapshot.chats) ||
+        snapshot.users.some((user) => !user ||
+            ['id', 'name', 'email', 'salt', 'passwordHash'].some((key) => typeof user[key] !== 'string')) ||
+        Object.values(snapshot.chats).some((chat) => !chat || !Array.isArray(chat.messages))) {
+        throw new Error('INITIAL_DATA_JSON has an invalid account database format.');
+    }
+    // Restore password hashes and history, but require fresh sign-ins.
+    database = { users: snapshot.users, chats: snapshot.chats, sessions: [] };
+    persistDatabase();
+    const messageCount = Object.values(database.chats).reduce((count, chat) => count + chat.messages.length, 0);
+    console.log(`Restored ${database.users.length} accounts and ${messageCount} messages from private initialization data.`);
 }
 
 function persistDatabase() {
