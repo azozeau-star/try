@@ -1,0 +1,19 @@
+# Optional Render Blueprint. The free service is suitable for testing only:
+# its local account data is not durable. See DEPLOY.md for persistent storage.
+services:
+  - type: web
+    name: sami-says
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: STATIC_SITE_ORIGIN
+        sync: false

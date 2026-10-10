@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+    <html dir="rtl" lang="ar">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>لوحة تحكم المطور</title>
+        <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+        <style>
+            body { font-family: 'Tajawal', sans-serif; display: flex; height: 100vh; margin: 0; background-color: #0a0f16; color: white; }
+            #sidebar { width: 300px; background: #111826; padding: 20px; border-left: 1px solid #1f2937; overflow-y: auto; }
+            .user-btn { display: block; width: 100%; padding: 15px; margin-bottom: 8px; cursor: pointer; background: #1f2937; color: white; border: none; text-align: right; border-radius: 8px; font-family: 'Tajawal', sans-serif;}
+            .user-btn:hover { background: #374151; }
+            #chat-area { flex-grow: 1; padding: 20px; display: flex; flex-direction: column; }
+            #chat { flex-grow: 1; background: #111826; border-radius: 12px; padding: 20px; overflow-y: auto; margin-bottom: 15px; }
+            .msg { margin: 10px 0; padding: 12px; background: #1f2937; border-radius: 8px; white-space: pre-wrap; }
+            .controls { display: flex; gap: 10px; }
+            input[type="text"] { flex-grow: 1; padding: 12px; border-radius: 8px; border: none; background: #1f2937; color: white; font-family: 'Tajawal', sans-serif; outline: none; }
+            button.send-btn { padding: 12px 25px; background: #007bff; color: white; border: none; border-radius: 8px; cursor: pointer; font-family: 'Tajawal', sans-serif; }
+            #takeover { padding: 10px; background: #d97706; color: white; border: none; border-radius: 8px; cursor: pointer; margin-bottom: 15px; font-family: 'Tajawal', sans-serif;}
+            #admin-login { width: min(420px, calc(100% - 32px)); margin: auto; padding: 26px; border: 1px solid #1f2937; border-radius: 16px; background: #111826; }
+            #admin-login label { display: grid; gap: 8px; }
+            #admin-error { min-height: 24px; margin-top: 10px; color: #ff9a9a; }
+            [hidden] { display: none !important; }
+            @media (max-width: 640px) {
+                #admin-interface { flex-direction: column; }
+                #sidebar { width: auto; max-height: 150px; }
+                #chat-area { min-height: 0; padding: 12px; }
+                #chat { min-height: 180px; }
+            }
+        </style>
+    </head>
+    <body>
+        <form id="admin-login" hidden>
+            <h2>تسجيل دخول المطور</h2>
+            <label>كلمة مرور لوحة المطور
+                <input id="admin-password" type="password" autocomplete="current-password" required>
+            </label>
+            <button class="send-btn" type="submit">تسجيل الدخول</button>
+            <div id="admin-error" role="alert" aria-live="polite"></div>
+        </form>
+        <div id="admin-interface" hidden style="display:flex; flex:1;">
+            <div id="sidebar">
+                <h3>المستخدمين النشطين</h3>
+                <div id="user-list"></div>
+            </div>
+            <div id="chat-area">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+                    <h2 id="title">اختر مستخدم للبدء</h2>
+                    <button class="send-btn" id="admin-logout" type="button">تسجيل الخروج</button>
+                </div>
+                <button id="takeover" style="display:none;">إيقاف الذكاء الاصطناعي (التحدث مباشرة)</button>
+                <div id="chat"></div>
+                <div class="controls">
+                    <input type="text" id="input" placeholder="اكتب ردك هنا..." disabled onkeypress="handleKeyPress(event)">
+                    <button class="send-btn" onclick="send()">إرسال</button>
+                </div>
+            </div>
+        </div>
+        <script src="../assets/socket.io.min.js"></script>
+        <script src="../config.js"></script>
+        <script src="../client.js"></script>
+        <script>
+            const socket = Sami.createSocket();
+            let activeUser = null;
+            let activeUserName = '';
+            let activeHumanTakeover = false;
+            socket.on('connect_error', () => {
+                document.getElementById('admin-error').textContent = 'تعذّر التحقق من جلسة المطور. سجّل الدخول مجدداً.';
+                socket.disconnect();
+                document.getElementById('admin-interface').hidden = true;
+                document.getElementById('admin-login').hidden = false;
+            });
+
+            function showAdminInterface() {
+                document.getElementById('admin-login').hidden = true;
+                document.getElementById('admin-interface').hidden = false;
+                socket.connect();
+            }
+
+            document.getElementById('admin-logout').addEventListener('click', async () => {
+                socket.disconnect();
+                try {
+                    await Sami.request('/api/logout', {});
+                    location.reload();
+                } catch (error) {
+                    document.getElementById('admin-error').textContent = error.message;
+                    socket.connect();
+                }
+            });
+
+            document.getElementById('admin-login').addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const error = document.getElementById('admin-error');
+                error.textContent = '';
+                try {
+                    await Sami.request('/api/admin/login', { password: document.getElementById('admin-password').value });
+                    document.getElementById('admin-password').value = '';
+                    showAdminInterface();
+                } catch (loginError) {
+                    error.textContent = loginError.message;
+                }
+            });
+
+            Sami.request('/api/me')
+                .then((result) => {
+                    if (result.authenticated && result.role === 'admin') showAdminInterface();
+                    else {
+                        document.getElementById('admin-login').hidden = false;
+                        if (result.authenticated) document.getElementById('admin-error').textContent = 'هذا الحساب غير مخوّل لدخول لوحة المطور.';
+                    }
+                })
+                .catch((error) => {
+                    document.getElementById('admin-login').hidden = false;
+                    document.getElementById('admin-error').textContent = error.message;
+                });
+
+            function addUser(user) {
+                const { userId, displayName } = user;
+                let button = document.getElementById('btn-' + userId);
+                if (!button) {
+                    button = document.createElement('button');
+                    button.className = 'user-btn';
+                    button.id = 'btn-' + userId;
+                    button.addEventListener('click', () => loadChat(userId));
+                    document.getElementById('user-list').appendChild(button);
+                }
+                button.textContent = (displayName || 'مستخدم') + ' · ' + userId.substring(0, 6);
+                button.dataset.displayName = displayName || 'مستخدم';
+                if (activeUser === userId) {
+                    activeUserName = button.dataset.displayName;
+                    document.getElementById('title').innerText = 'محادثة مع: ' + activeUserName;
+                }
+            }
+
+            function renderMessages(messages) {
+                const chat = document.getElementById('chat');
+                chat.replaceChildren();
+                messages.forEach((message) => {
+                    const row = document.createElement('div');
+                    row.className = 'msg';
+                    const sender = document.createElement('strong');
+                    const senderName = message.sender === 'user'
+                        ? activeUserName
+                        : message.sender === 'AI'
+                            ? 'الذكاء الاصطناعي'
+                            : message.sender === 'Developer'
+                                ? 'د.سامي'
+                                : message.sender;
+                    sender.textContent = senderName + ':';
+                    row.append(sender, document.createTextNode(' ' + message.text));
+                    chat.appendChild(row);
+                });
+                chat.scrollTop = chat.scrollHeight;
+            }
+
+            socket.on('active_users', (users) => {
+                document.getElementById('user-list').replaceChildren();
+                activeUser = null;
+                document.getElementById('input').disabled = true;
+                document.getElementById('takeover').style.display = 'none';
+                document.getElementById('chat').replaceChildren();
+                document.getElementById('title').textContent = 'اختر مستخدم للبدء';
+                users.forEach(addUser);
+            });
+            socket.on('new_user', addUser);
+
+            socket.on('update_admin_chat', (data) => {
+                addUser({ userId: data.userId, displayName: data.displayName });
+                if(activeUser === data.userId) {
+                    renderMessages(data.messages);
+                }
+            });
+
+            socket.on('admin_chat_history', (data) => {
+                if(activeUser === data.userId) {
+                    activeUserName = data.displayName || activeUserName;
+                    document.getElementById('title').innerText = 'محادثة مع: ' + activeUserName;
+                    renderMessages(data.messages);
+                }
+            });
+
+            socket.on('admin_takeover_state', (data) => {
+                if (activeUser === data.userId) setTakeoverButton(data.humanTakeover);
+            });
+
+            socket.on('user_disconnected', (id) => {
+                const btn = document.getElementById('btn-'+id);
+                if(btn) btn.remove();
+                if (activeUser === id) {
+                    activeUser = null;
+                    activeUserName = '';
+                    activeHumanTakeover = false;
+                    document.getElementById('title').innerText = 'اختر مستخدم للبدء';
+                    document.getElementById('chat').replaceChildren();
+                    document.getElementById('input').disabled = true;
+                    document.getElementById('takeover').style.display = 'none';
+                }
+            });
+
+            function setTakeoverButton(humanTakeover) {
+                activeHumanTakeover = humanTakeover;
+                const takeover = document.getElementById('takeover');
+                takeover.textContent = humanTakeover
+                    ? 'استئناف رد الذكاء الاصطناعي'
+                    : 'إيقاف الذكاء الاصطناعي (التحدث مباشرة)';
+                takeover.style.background = humanTakeover ? '#047857' : '#d97706';
+                takeover.setAttribute('aria-pressed', String(humanTakeover));
+            }
+
+            function loadChat(id) {
+                activeUser = id;
+                activeHumanTakeover = false;
+                const button = document.getElementById('btn-' + id);
+                activeUserName = button ? button.dataset.displayName : 'مستخدم';
+                document.getElementById('title').innerText = 'محادثة مع: ' + activeUserName;
+                document.getElementById('input').disabled = false;
+                document.getElementById('chat').replaceChildren();
+                socket.emit('load_admin_chat', id);
+                const takeover = document.getElementById('takeover');
+                takeover.style.display = 'inline-block';
+                setTakeoverButton(activeHumanTakeover);
+                takeover.onclick = () => {
+                    const nextState = !activeHumanTakeover;
+                    socket.emit('admin_set_takeover', { userId: id, enabled: nextState });
+                };
+            }
+
+            function send() {
+                const input = document.getElementById('input');
+                if(!input.value || !activeUser || !socket.connected) return;
+                socket.emit('admin_message', { userId: activeUser, text: input.value });
+                input.value = '';
+            }
+            
+            function handleKeyPress(e) {
+                if (e.key === 'Enter') send();
+            }
+        </script>
+    </body>
+    </html>

@@ -1,0 +1,645 @@
+
+    <!DOCTYPE html>
+    <html dir="rtl" lang="ar">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#05080b">
+        <title>سامي يقول - اسأل سؤالك الطبي</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+        <style>
+            :root {
+                color-scheme: dark;
+                --font-scale: 1;
+                --bg: #05080b;
+                --panel: #0c1218;
+                --panel-soft: #0b151d;
+                --border: #1b2a35;
+                --muted: #93a9b8;
+                --blue: #159de1;
+                --blue-bright: #20aaf0;
+            }
+            * { box-sizing: border-box; }
+            [hidden] { display: none !important; }
+            body {
+                min-height: 100vh;
+                margin: 0;
+                color: #f4f8fb;
+                background: radial-gradient(ellipse 42rem 27rem at 50% 16%, #0b1b29 0%, var(--bg) 72%);
+                font-family: 'Tajawal', sans-serif;
+                font-size: calc(16px * var(--font-scale));
+            }
+            body[data-font-size="small"] { --font-scale: .9; }
+            body[data-font-size="large"] { --font-scale: 1.12; }
+            button, input { font: inherit; }
+            button { color: inherit; }
+            .topbar {
+                height: 59px;
+                padding: 0 max(5vw, 22px);
+                border-bottom: 1px solid #18232c;
+                background: rgba(5, 8, 11, .82);
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+            }
+            .brand { display: flex; align-items: center; gap: 10px; }
+            .brand-mark, .doctor-mark {
+                display: grid;
+                place-items: center;
+                color: #fff;
+                background: linear-gradient(145deg, #24b9fb, #0876bc);
+                box-shadow: 0 5px 18px #078bd344;
+                font-weight: 800;
+            }
+            .brand-mark { width: 36px; height: 36px; border-radius: 12px; font-size: 23px; }
+            .brand-name { font-size: calc(16px * var(--font-scale)); font-weight: 800; line-height: 1.15; }
+            .brand-caption { margin-top: 3px; color: var(--muted); font-size: calc(9px * var(--font-scale)); }
+            .top-actions { display: flex; gap: 8px; direction: ltr; }
+            .icon-button {
+                min-width: 37px;
+                height: 36px;
+                padding: 0 10px;
+                border: 1px solid var(--border);
+                border-radius: 11px;
+                background: #0b1117;
+                cursor: pointer;
+            }
+            .icon-button:hover, .feature-card:hover { border-color: #168ac2; }
+            main { width: min(100% - 36px, 615px); margin: 22px auto 92px; }
+            .home-view { display: block; }
+            .hero {
+                min-height: 412px;
+                padding: 40px 38px 34px;
+                position: relative;
+                display: flex;
+                align-items: center;
+                overflow: hidden;
+                border: 1px solid #142a39;
+                border-radius: 23px;
+                background:
+                    radial-gradient(circle at 83% 78%, #0b4662a8 0, transparent 34%),
+                    linear-gradient(125deg, #09131b, #07121c 60%, #0a1c28);
+            }
+            .hero-copy { width: 62%; text-align: center; position: relative; z-index: 1; }
+            .tag {
+                display: inline-flex;
+                align-items: center;
+                padding: 4px 10px;
+                border: 1px solid #0879ad;
+                border-radius: 99px;
+                color: #54c8ff;
+                font-size: calc(11px * var(--font-scale));
+                font-weight: 700;
+            }
+            h1 { margin: 15px 0 0; font-size: calc(clamp(32px, 5vw, 46px) * var(--font-scale)); line-height: 1.16; font-weight: 800; }
+            h1 span { display: block; color: var(--blue-bright); }
+            .hero-copy p { margin: 18px 0 20px; color: #a6bac8; font-size: calc(14px * var(--font-scale)); }
+            .primary-button {
+                min-height: 43px;
+                padding: 0 21px;
+                border: 0;
+                border-radius: 12px;
+                background: linear-gradient(110deg, #159fe4, #087cbd);
+                box-shadow: 0 8px 22px #078bd333;
+                cursor: pointer;
+                font-weight: 800;
+            }
+            .primary-button:hover { filter: brightness(1.12); }
+                        .doctor-art {
+                position: absolute;
+                left: 7.5%;
+                top: 50%;
+                width: 172px;
+                height: 172px;
+                transform: translateY(-50%);
+                display: grid;
+                place-items: center;
+                border: 1px solid #0c4561;
+                border-radius: 50%;
+                background: radial-gradient(circle at 50% 44%, #12354a, #07131d 70%);
+                overflow: hidden;
+                box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+            }
+            .doctor-art img {
+                display: block;
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                object-position: center 18%;
+                border-radius: 50%;
+            }
+            .sparkle { position: absolute; left: 5%; top: 35%; color: #ef4444; font-size: 27px; font-weight: 800; }
+            .section-label { display: flex; align-items: center; gap: 10px; margin: 22px 2px 12px; font-weight: 800; }
+            .section-label::before { content: ''; height: 1px; flex: 1; background: #182832; }
+            .feature-card {
+                width: 100%;
+                min-height: 68px;
+                margin: 0 0 9px;
+                padding: 12px 16px;
+                display: flex;
+                align-items: center;
+                gap: 13px;
+                border: 1px solid var(--border);
+                border-radius: 15px;
+                background: linear-gradient(110deg, #0b1117, #0b1218);
+                text-align: right;
+                cursor: pointer;
+            }
+            .feature-card:first-of-type { border-color: #087bad; }
+            .feature-icon { width: 39px; height: 39px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 12px; background: #102633; font-size: 19px; }
+            .feature-text { flex: 1; }
+            .feature-text strong { display: block; font-size: calc(15px * var(--font-scale)); }
+            .feature-text small { display: block; margin-top: 2px; color: var(--muted); font-size: calc(10px * var(--font-scale)); }
+            .card-arrow { color: var(--blue-bright); font-size: 22px; }
+            .notice {
+                margin-top: 10px;
+                padding: 12px 15px;
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                background: #0d141b;
+                color: var(--muted);
+                font-size: calc(10px * var(--font-scale));
+                line-height: 1.7;
+            }
+            .notice strong { display: block; margin-bottom: 2px; color: #f4c842; font-size: calc(13px * var(--font-scale)); }
+            .chat-view { display: none; height: min(720px, calc(100vh - 178px)); min-height: 420px; flex-direction: column; }
+            .chat-heading { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; }
+            .back-button { width: 42px; height: 42px; border: 1px solid var(--border); border-radius: 12px; background: #0b1117; cursor: pointer; }
+            .chat-heading h2 { margin: 0; font-size: calc(22px * var(--font-scale)); }
+            .chat-intro { margin-bottom: 9px; padding: 13px 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--panel-soft); }
+            .chat-intro strong { display: block; margin-bottom: 3px; }
+            .chat-intro small { color: var(--muted); }
+            #chat {
+                flex: 1;
+                min-height: 0;
+                padding: 16px;
+                overflow-y: auto;
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                border: 1px solid var(--border);
+                border-radius: 16px;
+                background: #080d12;
+            }
+            .message { max-width: 86%; padding: 11px 15px; border-radius: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+            .message.user { align-self: flex-start; background: #078bd0; }
+            .message.AI, .message.Developer { align-self: flex-end; background: #101a22; border: 1px solid #1a2c38; }
+            .message strong { color: #64cfff; }
+            .input-area { display: flex; gap: 9px; margin-top: 10px; padding: 7px; border: 1px solid #213441; border-radius: 14px; background: #0c1218; }
+            #input { flex: 1; min-width: 0; padding: 0 12px; border: 0; outline: 0; color: white; background: transparent; }
+            #notification { position: fixed; top: 72px; left: 50%; transform: translateX(-50%); padding: 11px 18px; border-radius: 10px; background: #047857; z-index: 5; }
+            #notification[hidden] { display: none; }
+            .bottom-nav {
+                position: fixed;
+                bottom: 0;
+                left: 50%;
+                width: min(340px, calc(100% - 32px));
+                transform: translateX(-50%);
+                display: flex;
+                justify-content: space-around;
+                padding: 10px 14px 7px;
+                border: 1px solid #1b2a35;
+                border-bottom: 0;
+                border-radius: 18px 18px 0 0;
+                background: rgba(8, 13, 18, .96);
+                backdrop-filter: blur(12px);
+            }
+            .nav-item { min-width: 72px; padding: 0; border: 0; background: transparent; color: #8498a6; cursor: pointer; font-size: calc(10px * var(--font-scale)); }
+            .nav-item span { display: block; margin-bottom: 3px; font-size: 15px; }
+            .nav-item.active { color: var(--blue-bright); font-weight: 800; }
+            .auth-screen {
+                width: min(440px, calc(100% - 28px));
+                margin: min(12vh, 100px) auto 40px;
+                padding: 28px;
+                border: 1px solid var(--border);
+                border-radius: 22px;
+                background: linear-gradient(145deg, #0d1821, #0a1118);
+                box-shadow: 0 20px 70px #0005;
+            }
+            .auth-heading { margin: 0 0 6px; font-size: 26px; }
+            .auth-subtitle, .auth-help { color: var(--muted); line-height: 1.6; }
+            .auth-form { display: grid; gap: 12px; margin-top: 21px; }
+            .auth-form label { display: grid; gap: 6px; font-weight: 700; }
+            .auth-form input {
+                width: 100%;
+                min-height: 46px;
+                padding: 0 12px;
+                border: 1px solid var(--border);
+                border-radius: 11px;
+                outline: 0;
+                color: inherit;
+                background: #101820;
+            }
+            .auth-form input:focus { border-color: var(--blue); }
+            .auth-error { min-height: 24px; color: #ff9a9a; }
+            .auth-switch { width: 100%; margin-top: 14px; padding: 9px; border: 0; color: #64cfff; background: transparent; cursor: pointer; }
+            .user-account { color: var(--muted); font-size: 12px; }
+            .logout-button { min-width: 0; }
+            body[data-theme="light"] .auth-screen { border-color: #d4e0e8; background: #fff; box-shadow: 0 20px 70px #18304818; }
+            body[data-theme="light"] .auth-form input { border-color: #d4e0e8; color: #20313f; background: #f5f9fb; }
+            .settings-dialog {
+                width: min(440px, calc(100% - 28px));
+                padding: 0;
+                border: 1px solid var(--border);
+                border-radius: 20px;
+                color: inherit;
+                background: var(--panel);
+                box-shadow: 0 24px 80px #0009;
+            }
+            .settings-dialog::backdrop { background: #000a; backdrop-filter: blur(5px); }
+            .settings-content { padding: 20px; }
+            .settings-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+            .settings-header h2 { margin: 0; font-size: calc(21px * var(--font-scale)); }
+            .settings-close { width: 36px; height: 36px; border: 1px solid var(--border); border-radius: 10px; background: transparent; cursor: pointer; }
+            .setting-group { margin-top: 18px; }
+            .setting-label { display: block; margin-bottom: 10px; font-weight: 800; }
+            .setting-options { display: flex; gap: 8px; }
+            .setting-option {
+                flex: 1;
+                min-height: 42px;
+                padding: 7px 10px;
+                border: 1px solid var(--border);
+                border-radius: 11px;
+                background: #101820;
+                cursor: pointer;
+            }
+            .setting-option[aria-pressed="true"] { border-color: #159de1; color: #64cfff; background: #102838; }
+            .theme-switch {
+                width: 100%;
+                min-height: 54px;
+                padding: 10px 13px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                background: #101820;
+                text-align: right;
+                cursor: pointer;
+            }
+            .theme-switch small { display: block; margin-top: 3px; color: var(--muted); }
+            .switch-indicator { color: #64cfff; font-size: 19px; }
+            body[data-theme="light"] {
+                color: #182532;
+                background: radial-gradient(ellipse 42rem 27rem at 50% 16%, #e6f5fc 0%, #f4f8fb 72%);
+            }
+            body[data-theme="light"] .topbar { border-color: #d7e3eb; background: rgba(248, 251, 253, .9); }
+            body[data-theme="light"] .icon-button,
+            body[data-theme="light"] .back-button { color: #243746; background: #fff; border-color: #d4e0e8; }
+            body[data-theme="light"] .brand-caption,
+            body[data-theme="light"] .hero-copy p,
+            body[data-theme="light"] .feature-text small,
+            body[data-theme="light"] .notice,
+            body[data-theme="light"] .chat-intro small,
+            body[data-theme="light"] .theme-switch small { color: #5a7080; }
+            body[data-theme="light"] .hero {
+                border-color: #d1e4ee;
+                background: radial-gradient(circle at 83% 78%, #c8efff 0, transparent 38%), linear-gradient(125deg, #f5fbff, #eaf7fd 60%, #e3f3fa);
+            }
+            body[data-theme="light"] .doctor-art { border-color: #c5e5f2; background: radial-gradient(circle at 50% 44%, #d6f2ff, #eef9ff 70%); }
+            body[data-theme="light"] .section-label::before { background: #d5e0e7; }
+            body[data-theme="light"] .feature-card,
+            body[data-theme="light"] .notice,
+            body[data-theme="light"] .chat-intro,
+            body[data-theme="light"] .settings-dialog { background: #fff; border-color: #d4e0e8; }
+            body[data-theme="light"] .feature-icon { background: #e7f5fb; }
+            body[data-theme="light"] #chat { background: #f5f9fb; border-color: #d4e0e8; }
+            body[data-theme="light"] .message.AI,
+            body[data-theme="light"] .message.Developer { color: #20313f; background: #fff; border-color: #d4e0e8; }
+            body[data-theme="light"] .input-area,
+            body[data-theme="light"] .bottom-nav { color: #20313f; background: rgba(255, 255, 255, .96); border-color: #d4e0e8; }
+            body[data-theme="light"] #input { color: #20313f; }
+            body[data-theme="light"] .setting-option,
+            body[data-theme="light"] .theme-switch { color: #20313f; background: #f5f9fb; border-color: #d4e0e8; }
+            body[data-theme="light"] .setting-option[aria-pressed="true"] { color: #087ab6; background: #e8f6fd; border-color: #159de1; }
+            body[data-theme="light"] .nav-item { color: #627786; }
+            body[data-theme="light"] .nav-item.active { color: #0784c7; }
+            @media (max-width: 560px) {
+                .topbar { height: 55px; padding: 0 16px; }
+                main { width: min(100% - 24px, 615px); margin-top: 14px; }
+                .hero { min-height: 350px; padding: 28px 18px; }
+                .hero-copy { width: 100%; padding-top: 118px; }
+                .doctor-art { top: 20px; left: 50%; width: 112px; height: 112px; transform: translateX(-50%); font-size: 68px; }
+                .sparkle { top: 12%; left: 15%; }
+                .hero-copy p { font-size: calc(12px * var(--font-scale)); }
+                .feature-card { min-height: 64px; }
+                .chat-view { height: calc(100vh - 145px); }
+                .message { max-width: 94%; }
+            }
+        </style>
+    </head>
+    <body>
+        <section id="auth-screen" class="auth-screen" aria-labelledby="auth-title">
+            <div class="brand-mark" aria-hidden="true">س</div>
+            <h1 class="auth-heading" id="auth-title">مرحباً بك</h1>
+            <p class="auth-subtitle" id="auth-subtitle">سجّل الدخول للعودة إلى محادثاتك المحفوظة.</p>
+            <form id="auth-form" class="auth-form">
+                <label id="name-field" hidden>الاسم
+                    <input id="auth-name" name="name" type="text" maxlength="50" autocomplete="name">
+                </label>
+                <label>البريد الإلكتروني
+                    <input id="auth-email" name="email" type="email" maxlength="254" autocomplete="email" required>
+                </label>
+                <label>كلمة المرور
+                    <input id="auth-password" name="password" type="password" minlength="8" maxlength="128" autocomplete="current-password" required>
+                </label>
+                <div class="auth-error" id="auth-error" role="alert" aria-live="polite"></div>
+                <button class="primary-button" id="auth-submit" type="submit">تسجيل الدخول</button>
+            </form>
+            <button class="auth-switch" id="auth-switch" type="button">ليس لديك حساب؟ أنشئ حساباً</button>
+            <p class="auth-help"><a href="./developer/">دخول المطور</a></p>
+            <p class="auth-help">محادثاتك محفوظة في حسابك. كلمة المرور لا تُخزّن كنص مكشوف.</p>
+        </section>
+        <header class="topbar" id="app-header" hidden>
+            <div class="brand">
+                <div class="brand-mark" aria-hidden="true">س</div>
+                <div><div class="brand-name">سامي يقول</div><div class="brand-caption">معلومة صحية.. بطريقة سامي</div></div>
+            </div>
+            <div class="top-actions">
+                <span class="user-account" id="account-label"></span>
+                <button class="icon-button" id="open-settings" type="button" aria-label="فتح الإعدادات">⚙</button>
+                <button class="icon-button logout-button" id="logout-button" type="button">خروج</button>
+            </div>
+        </header>
+        <div id="notification" role="status" aria-live="polite" hidden></div>
+        <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
+            <div class="settings-content">
+                <div class="settings-header">
+                    <h2 id="settings-title">خصص تجربتك</h2>
+                    <button class="settings-close" id="close-settings" type="button" aria-label="إغلاق الإعدادات">✕</button>
+                </div>
+                <section class="setting-group" aria-labelledby="font-size-label">
+                    <span class="setting-label" id="font-size-label">حجم الخط</span>
+                    <div class="setting-options">
+                        <button class="setting-option" type="button" data-font-size="small" aria-pressed="false">صغير</button>
+                        <button class="setting-option" type="button" data-font-size="medium" aria-pressed="true">متوسط</button>
+                        <button class="setting-option" type="button" data-font-size="large" aria-pressed="false">كبير</button>
+                    </div>
+                </section>
+                <section class="setting-group" aria-labelledby="theme-label">
+                    <span class="setting-label" id="theme-label">المظهر</span>
+                    <button class="theme-switch" id="toggle-theme" type="button" aria-pressed="false">
+                        <span><strong id="theme-name">المظهر الداكن</strong><small id="theme-description">اضغط للتبديل إلى المظهر الفاتح</small></span>
+                        <span class="switch-indicator" id="theme-icon" aria-hidden="true">🌙</span>
+                    </button>
+                </section>
+            </div>
+        </dialog>
+        <main id="app-main" hidden>
+            <section id="home-view" class="home-view">
+                <div class="hero">
+                    <span class="sparkle" aria-hidden="true">✚</span>
+                    <div class="hero-copy">
+                        <span class="tag">#سامي_يقول</span>
+                        <h1>اسأل سؤالك الطبي<span>وسامي يقول لك</span></h1>
+                        <p>معلومات صحية مبسطة، واضحة، وبدون تعقيد.</p>
+                        <button class="primary-button" type="button" data-open-chat>اطرح سؤالك الآن&nbsp; 💬</button>
+                    </div>
+                    <div class="doctor-art" aria-hidden="true"><img src="./assets/doctor-portrait.png" alt="صورة الطبيب" /></div>
+                </div>
+                <div class="section-label">ابدأ من هنا</div>
+                <button class="feature-card" type="button" data-open-chat>
+                    <span class="feature-icon">💬</span>
+                    <span class="feature-text"><strong>الدردشة وطرح الأسئلة</strong><small>اسأل عن أي معلومة صحية</small></span>
+                    <span class="card-arrow" aria-hidden="true">←</span>
+                </button>
+                <button class="feature-card" type="button" data-info="سامي يقول مساعد صحي يشرح المعلومات الصحية بأسلوب مبسط.">
+                    <span class="feature-icon">▶️</span>
+                    <span class="feature-text"><strong>تعرف على سامي يقول</strong><small>عن الفكرة والمحتوى والإشراف الطبي</small></span>
+                    <span class="card-arrow" aria-hidden="true">←</span>
+                </button>
+                <div class="notice"><strong>معلومة مهمة&nbsp; 🩺</strong>المساعد يقدم معلومات صحية عامة ولا يغني عن تقييم الطبيب. في الحالات الطارئة، توجه للطوارئ فوراً.</div>
+            </section>
+            <section id="chat-view" class="chat-view" aria-label="الدردشة الطبية">
+                <div class="chat-heading">
+                    <button id="back-button" class="back-button" type="button" aria-label="العودة للرئيسية">→</button>
+                    <div><span class="tag">#سامي_يقول</span><h2>وش سؤالك؟</h2></div>
+                    <div class="brand-mark" aria-hidden="true" style="margin-inline-start:auto">س</div>
+                </div>
+                <div id="welcome-message" class="chat-intro" hidden><strong>أهلاً! أنا الذكاء الاصطناعي 👋</strong><small>اكتب سؤالك، وسأساعدك تفهم الموضوع بشكل أبسط.</small></div>
+                <div id="chat" aria-live="polite" hidden></div>
+                <div class="input-area" id="message-controls" hidden>
+                    <input type="text" id="input" placeholder="اكتب سؤالك هنا..." autocomplete="off">
+                    <button class="primary-button" id="send-button" type="button">إرسال ↑</button>
+                </div>
+            </section>
+        </main>
+        <nav id="app-nav" class="bottom-nav" aria-label="التنقل الرئيسي" hidden>
+            <button class="nav-item" type="button" data-settings><span>⚙</span>الإعدادات</button>
+            <button class="nav-item active" type="button" data-open-chat><span>💬</span>اسأل سامي</button>
+            <button class="nav-item" type="button" id="home-button"><span>⌂</span>الرئيسية</button>
+        </nav>
+        <script src="./assets/socket.io.min.js"></script>
+        <script src="./config.js"></script>
+        <script src="./client.js"></script>
+        <script>
+            const socket = Sami.createSocket();
+            const chat = document.getElementById('chat');
+            const input = document.getElementById('input');
+            const messageControls = document.getElementById('message-controls');
+            let currentUser = null;
+            let authMode = 'login';
+            const authScreen = document.getElementById('auth-screen');
+            const authForm = document.getElementById('auth-form');
+            const notification = document.getElementById('notification');
+            const homeView = document.getElementById('home-view');
+            const chatView = document.getElementById('chat-view');
+            const settingsDialog = document.getElementById('settings-dialog');
+            const themeToggle = document.getElementById('toggle-theme');
+            let notificationTimer;
+
+            function setAuthMode(mode) {
+                authMode = mode;
+                const isSignup = mode === 'signup';
+                const nameField = document.getElementById('name-field');
+                const passwordField = document.getElementById('auth-password');
+                nameField.hidden = !isSignup;
+                document.getElementById('auth-name').required = isSignup;
+                document.getElementById('auth-title').textContent = isSignup ? 'إنشاء حساب جديد' : 'مرحباً بعودتك';
+                document.getElementById('auth-subtitle').textContent = isSignup
+                    ? 'أنشئ حساباً لحفظ محادثاتك والعودة إليها لاحقاً.'
+                    : 'سجّل الدخول للعودة إلى محادثاتك المحفوظة.';
+                document.getElementById('auth-submit').textContent = isSignup ? 'إنشاء الحساب' : 'تسجيل الدخول';
+                document.getElementById('auth-switch').textContent = isSignup
+                    ? 'لديك حساب؟ سجّل الدخول'
+                    : 'ليس لديك حساب؟ أنشئ حساباً';
+                passwordField.autocomplete = isSignup ? 'new-password' : 'current-password';
+                document.getElementById('auth-error').textContent = '';
+            }
+
+            function showApplication(user) {
+                currentUser = user;
+                authScreen.hidden = true;
+                document.getElementById('app-header').hidden = false;
+                document.getElementById('app-main').hidden = false;
+                document.getElementById('app-nav').hidden = false;
+                document.getElementById('account-label').textContent = user.name;
+                document.getElementById('welcome-message').hidden = false;
+                chat.hidden = false;
+                messageControls.hidden = false;
+                socket.connect();
+                if (location.hash === '#chat') openChat();
+            }
+
+            const requestJson = Sami.request;
+
+            authForm.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const error = document.getElementById('auth-error');
+                const submit = document.getElementById('auth-submit');
+                error.textContent = '';
+                submit.disabled = true;
+                try {
+                    const values = new FormData(authForm);
+                    const endpoint = authMode === 'signup' ? '/api/signup' : '/api/login';
+                    const result = await requestJson(endpoint, {
+                        name: values.get('name'),
+                        email: values.get('email'),
+                        password: values.get('password')
+                    });
+                    showApplication(result.user);
+                } catch (requestError) {
+                    error.textContent = requestError.message;
+                } finally {
+                    submit.disabled = false;
+                }
+            });
+
+            document.getElementById('auth-switch').addEventListener('click', () => {
+                setAuthMode(authMode === 'login' ? 'signup' : 'login');
+            });
+            document.getElementById('logout-button').addEventListener('click', async () => {
+                socket.disconnect();
+                try {
+                    await Sami.request('/api/logout', {});
+                } catch (error) {
+                    showNotification(error.message);
+                    socket.connect();
+                    return;
+                }
+                currentUser = null;
+                chat.replaceChildren();
+                document.getElementById('app-header').hidden = true;
+                document.getElementById('app-main').hidden = true;
+                document.getElementById('app-nav').hidden = true;
+                authScreen.hidden = false;
+                setAuthMode('login');
+            });
+            socket.on('chat_history', (messages) => {
+                chat.replaceChildren();
+                messages.forEach((message) => append(message.sender, message.text));
+            });
+            socket.on('connect_error', () => {
+                if (currentUser) showNotification('تعذّر الاتصال. تحقق من الشبكة ثم أعد المحاولة.');
+            });
+            Sami.request('/api/me')
+                .then((result) => {
+                    if (result.authenticated && result.role === 'user') showApplication(result.user);
+                    else authScreen.hidden = false;
+                })
+                .catch((error) => {
+                    authScreen.hidden = false;
+                    document.getElementById('auth-error').textContent = error.message;
+                });
+
+            function applyFontSize(size) {
+                const allowedSizes = ['small', 'medium', 'large'];
+                const selectedSize = allowedSizes.includes(size) ? size : 'medium';
+                document.body.dataset.fontSize = selectedSize;
+                document.querySelectorAll('[data-font-size]').forEach((button) => {
+                    button.setAttribute('aria-pressed', String(button.dataset.fontSize === selectedSize));
+                });
+                localStorage.setItem('sami-font-size', selectedSize);
+            }
+
+            function applyTheme(theme) {
+                const selectedTheme = theme === 'light' ? 'light' : 'dark';
+                document.body.dataset.theme = selectedTheme;
+                const isLight = selectedTheme === 'light';
+                themeToggle.setAttribute('aria-pressed', String(isLight));
+                document.getElementById('theme-name').textContent = isLight ? 'المظهر الفاتح' : 'المظهر الداكن';
+                document.getElementById('theme-description').textContent = isLight ? 'اضغط للتبديل إلى المظهر الداكن' : 'اضغط للتبديل إلى المظهر الفاتح';
+                document.getElementById('theme-icon').textContent = isLight ? '☀️' : '🌙';
+                document.querySelector('meta[name="theme-color"]').content = isLight ? '#f4f8fb' : '#05080b';
+                localStorage.setItem('sami-theme', selectedTheme);
+            }
+
+            applyFontSize(localStorage.getItem('sami-font-size'));
+            applyTheme(localStorage.getItem('sami-theme'));
+            document.getElementById('open-settings').addEventListener('click', () => settingsDialog.showModal());
+            document.getElementById('close-settings').addEventListener('click', () => settingsDialog.close());
+            settingsDialog.addEventListener('click', (event) => {
+                if (event.target === settingsDialog) settingsDialog.close();
+            });
+            document.querySelectorAll('[data-font-size]').forEach((button) => {
+                button.addEventListener('click', () => applyFontSize(button.dataset.fontSize));
+            });
+            themeToggle.addEventListener('click', () => {
+                applyTheme(document.body.dataset.theme === 'light' ? 'dark' : 'light');
+            });
+            document.querySelectorAll('[data-settings]').forEach((button) => {
+                button.addEventListener('click', () => settingsDialog.showModal());
+            });
+
+            function showNotification(message) {
+                notification.textContent = message;
+                notification.hidden = false;
+                clearTimeout(notificationTimer);
+                notificationTimer = setTimeout(() => { notification.hidden = true; }, 5000);
+            }
+
+            function openChat() {
+                homeView.style.display = 'none';
+                chatView.style.display = 'flex';
+                history.replaceState(null, '', '#chat');
+                if (currentUser) input.focus();
+            }
+
+            function showHome() {
+                chatView.style.display = 'none';
+                homeView.style.display = 'block';
+                history.replaceState(null, '', location.pathname);
+            }
+
+            document.querySelectorAll('[data-open-chat]').forEach((button) => button.addEventListener('click', openChat));
+            document.getElementById('back-button').addEventListener('click', showHome);
+            document.getElementById('home-button').addEventListener('click', showHome);
+            document.querySelectorAll('[data-info]').forEach((button) => {
+                button.addEventListener('click', () => showNotification(button.dataset.info));
+            });
+
+            function append(sender, text) {
+                const div = document.createElement('div');
+                div.className = 'message ' + sender;
+                if (sender === 'AI' || sender === 'Developer') {
+                    const label = document.createElement('strong');
+                    label.textContent = sender === 'AI' ? 'الذكاء الاصطناعي: ' : 'د.سامي: ';
+                    div.appendChild(label);
+                }
+                div.appendChild(document.createTextNode(text));
+                chat.appendChild(div);
+                chat.scrollTop = chat.scrollHeight;
+            }
+
+            function send() {
+                const text = input.value.trim();
+                if (!currentUser || !text) return;
+                if (!socket.connected) { showNotification('انتظر حتى يتم الاتصال بالدردشة ثم أعد الإرسال.'); return; }
+                append('user', text);
+                socket.emit('user_message', text);
+                input.value = '';
+            }
+
+            document.getElementById('send-button').addEventListener('click', send);
+            input.addEventListener('keydown', (event) => { if (event.key === 'Enter') send(); });
+            socket.on('receive_message', (data) => {
+                append(data.sender, data.text);
+                if (data.sender === 'Developer') showNotification('وصل رد من د.سامي');
+            });
+
+            if (location.hash === '#chat') openChat();
+        </script>
+    </body>
+    </html>
