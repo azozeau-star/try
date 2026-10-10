@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const OpenAI = require('openai');
-const fs = require('fs');
+const { createStorage } = require('./storage');
 const path = require('path');
 const { createHash, randomBytes, scrypt, timingSafeEqual } = require('crypto');
 const { promisify } = require('util');
@@ -22,6 +22,8 @@ const groq = GROQ_API_KEY
 const scryptAsync = promisify(scrypt);
 // ---------------------
 
+async function main() {
+const storage = await createStorage();
 const app = express();
 // Render terminates HTTPS at its reverse proxy.
 app.set('trust proxy', 1);
@@ -55,59 +57,7 @@ const io = new Server(server, {
         callback(null, !origin || origin === `${protocol}://${req.headers.host}` || FRONTEND_ORIGINS.includes(origin));
     }
 });
-const DATA_DIRECTORY = process.env.DATA_DIRECTORY
-    ? path.resolve(process.env.DATA_DIRECTORY)
-    : path.join(__dirname, '.data');
-const DATA_FILE = path.join(DATA_DIRECTORY, 'accounts.json');
-fs.mkdirSync(DATA_DIRECTORY, { recursive: true });
-let database = { users: [], chats: {}, sessions: [] };
-if (fs.existsSync(DATA_FILE)) {
-    database = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    if (!Array.isArray(database.users) || !database.chats || typeof database.chats !== 'object') {
-        throw new Error('The account database has an invalid format.');
-    }
-    if (!Array.isArray(database.sessions)) database.sessions = [];
-} else if (process.env.INITIAL_DATA_JSON) {
-    // Private deployment seed only: never publish account records in the repository.
-    let snapshot;
-    try {
-        snapshot = JSON.parse(process.env.INITIAL_DATA_JSON);
-    } catch {
-        throw new Error('INITIAL_DATA_JSON is not valid JSON.');
-    }
-    if (!snapshot || !Array.isArray(snapshot.users) || !snapshot.chats ||
-        typeof snapshot.chats !== 'object' || Array.isArray(snapshot.chats) ||
-        snapshot.users.some((user) => !user ||
-            ['id', 'name', 'email', 'salt', 'passwordHash'].some((key) => typeof user[key] !== 'string')) ||
-        Object.values(snapshot.chats).some((chat) => !chat || !Array.isArray(chat.messages))) {
-        throw new Error('INITIAL_DATA_JSON has an invalid account database format.');
-    }
-    // Restore password hashes and history, but require fresh sign-ins.
-    database = { users: snapshot.users, chats: snapshot.chats, sessions: [] };
-    persistDatabase();
-    const messageCount = Object.values(database.chats).reduce((count, chat) => count + chat.messages.length, 0);
-    console.log(`Restored ${database.users.length} accounts and ${messageCount} messages from private initialization data.`);
-}
-
-function persistDatabase() {
-    const tempFile = `${DATA_FILE}.${process.pid}.tmp`;
-    fs.writeFileSync(tempFile, JSON.stringify(database), { mode: 0o600 });
-    fs.renameSync(tempFile, DATA_FILE);
-}
-
 const INACTIVE_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
-// Older accounts have no sign-in timestamp; start their first 14-day window at rollout.
-const configuredTrackingStart = Number(process.env.LOGIN_TRACKING_STARTED_AT);
-const trackingStartedAt = Number.isFinite(configuredTrackingStart) && configuredTrackingStart > 0
-    ? configuredTrackingStart : Date.now();
-let migratedLoginDates = false;
-for (const user of database.users) {
-    if (!Number.isFinite(user.lastLoginAt) || user.lastLoginAt <= 0) {
-        user.lastLoginAt = trackingStartedAt;
-        migratedLoginDates = true;
-    }
-}
-if (migratedLoginDates) persistDatabase();
 
 function hiddenReason(user, now = Date.now()) {
     if (user.developerHidden === true) return 'manual';
@@ -115,17 +65,10 @@ function hiddenReason(user, now = Date.now()) {
 }
 
 const activeChats = {};
-function sessionFromToken(token) {
+async function sessionFromToken(token) {
     if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) return null;
     const tokenHash = createHash('sha256').update(token).digest('hex');
-    const index = database.sessions.findIndex((session) => session.tokenHash === tokenHash);
-    if (index < 0) return null;
-    if (database.sessions[index].expiresAt <= Date.now()) {
-        database.sessions.splice(index, 1);
-        persistDatabase();
-        return null;
-    }
-    return { ...database.sessions[index], tokenHash };
+    return await storage.getSession(tokenHash) || null;
 }
 function sessionFromHeaders(headers = {}) {
     if (headers.authorization) {
@@ -140,12 +83,10 @@ function setSessionCookie(res, token, maxAge = 604800) {
     res.setHeader('Set-Cookie', `sami_session=${token}; HttpOnly;${secure} SameSite=Lax; Path=/; Max-Age=${maxAge}`);
 }
 
-function createSession(res, session) {
+async function createSession(res, session) {
     const token = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(token).digest('hex');
-    database.sessions = database.sessions.filter((entry) => entry.expiresAt > Date.now());
-    database.sessions.push({ ...session, tokenHash, expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000 });
-    persistDatabase();
+    await storage.addSession({ ...session, tokenHash, expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000 });
     const origin = res.req.get('Origin');
     if (origin && origin !== `${res.req.protocol}://${res.req.get('host')}`) {
         // Static hosting uses a bearer session instead of third-party cookies.
@@ -193,11 +134,11 @@ function recordFailedLogin(key) {
 
 app.use(express.json({ limit: '16kb' }));
 
-app.get('/api/me', (req, res) => {
-    const session = sessionFromHeaders(req.headers);
+app.get('/api/me', async (req, res) => {
+    const session = await sessionFromHeaders(req.headers);
     if (!session) return res.json({ authenticated: false });
     if (session.role === 'admin') return res.json({ authenticated: true, role: 'admin' });
-    const user = database.users.find((entry) => entry.id === session.userId);
+    const user = await storage.getUser(session.userId);
     if (!user) return res.json({ authenticated: false });
     return res.json({ authenticated: true, role: 'user', user: publicUser(user) });
 });
@@ -211,22 +152,18 @@ app.post('/api/signup', async (req, res, next) => {
         if (!name || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8 || password.length > 128) {
             return res.status(400).json({ error: 'أدخل اسماً وبريداً إلكترونياً صحيحاً وكلمة مرور من 8 أحرف على الأقل.' });
         }
-        if (database.users.some((user) => user.email === email)) {
+        if (await storage.findUser(email)) {
             return res.status(409).json({ error: 'يوجد حساب بهذا البريد الإلكتروني. سجّل الدخول بدلاً من ذلك.' });
         }
 
         const { salt, hash } = await hashPassword(password);
-        if (database.users.some((user) => user.email === email)) {
-            return res.status(409).json({ error: 'يوجد حساب بهذا البريد الإلكتروني. سجّل الدخول بدلاً من ذلك.' });
-        }
         const user = { id: randomBytes(16).toString('hex'), name, email, salt, passwordHash: hash, lastLoginAt: Date.now() };
-        database.users.push(user);
-        database.chats[user.id] = { displayName: name, messages: [] };
-        persistDatabase();
-        createSession(res, { role: 'user', userId: user.id });
-        broadcastChatList();
+        await storage.createAccount(user);
+        await createSession(res, { role: 'user', userId: user.id });
+        await broadcastChatList();
         return res.status(201).json({ authenticated: true, role: 'user', user: publicUser(user), sessionToken: res.locals.sessionToken });
     } catch (error) {
+        if (error.code === '23505') return res.status(409).json({ error: 'يوجد حساب بهذا البريد الإلكتروني. سجّل الدخول بدلاً من ذلك.' });
         return next(error);
     }
 });
@@ -238,22 +175,22 @@ app.post('/api/login', async (req, res, next) => {
         const body = req.body && typeof req.body === 'object' ? req.body : {};
         const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
         const password = typeof body.password === 'string' ? body.password : '';
-        const user = database.users.find((entry) => entry.email === email);
+        const user = await storage.findUser(email);
         if (!user || password.length > 128 || !await verifyPassword(password, user)) {
             recordFailedLogin(attemptKey);
             return res.status(401).json({ error: 'البريد الإلكتروني أو كلمة المرور غير صحيحة.' });
         }
         failedLoginAttempts.delete(attemptKey);
-        user.lastLoginAt = Date.now();
-        createSession(res, { role: 'user', userId: user.id });
-        broadcastChatList();
+        await storage.setUserFields(user.id, { lastLoginAt: Date.now() });
+        await createSession(res, { role: 'user', userId: user.id });
+        await broadcastChatList();
         return res.json({ authenticated: true, role: 'user', user: publicUser(user), sessionToken: res.locals.sessionToken });
     } catch (error) {
         return next(error);
     }
 });
 
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', async (req, res) => {
     if (!ADMIN_PASSWORD) {
         return res.status(503).json({ error: 'لم يتم إعداد كلمة مرور لوحة المطور. اضبط ADMIN_PASSWORD في إعدادات الخادم.' });
     }
@@ -267,15 +204,14 @@ app.post('/api/admin/login', (req, res) => {
         return res.status(401).json({ error: 'كلمة مرور لوحة المطور غير صحيحة.' });
     }
     failedLoginAttempts.delete(attemptKey);
-    createSession(res, { role: 'admin' });
+    await createSession(res, { role: 'admin' });
     return res.json({ authenticated: true, role: 'admin', sessionToken: res.locals.sessionToken });
 });
 
-app.post('/api/logout', (req, res) => {
-    const session = sessionFromHeaders(req.headers);
+app.post('/api/logout', async (req, res) => {
+    const session = await sessionFromHeaders(req.headers);
     if (session) {
-        database.sessions = database.sessions.filter((entry) => entry.tokenHash !== session.tokenHash);
-        persistDatabase();
+        await storage.removeSession(session.tokenHash);
         for (const connectedSocket of io.sockets.sockets.values()) {
             if (connectedSocket.sessionTokenHash === session.tokenHash) connectedSocket.disconnect(true);
         }
@@ -284,8 +220,9 @@ app.post('/api/logout', (req, res) => {
     return res.json({ success: true });
 });
 
-io.use((socket, next) => {
-    const session = (socket.handshake.auth && socket.handshake.auth.token
+io.use(async (socket, next) => {
+    try {
+    const session = await (socket.handshake.auth && socket.handshake.auth.token
         ? sessionFromToken(socket.handshake.auth.token)
         : sessionFromHeaders(socket.handshake.headers));
     if (!session) return next(new Error('Authentication required'));
@@ -294,12 +231,14 @@ io.use((socket, next) => {
         socket.role = 'admin';
         return next();
     }
-    const user = database.users.find((entry) => entry.id === session.userId);
+    const user = await storage.getUser(session.userId);
     if (!user) return next(new Error('Authentication required'));
     socket.role = 'user';
     socket.accountId = user.id;
     socket.accountName = user.name;
+    socket.savedChat = await storage.getChat(user.id);
     return next();
+    } catch { return next(new Error('Database unavailable. Please reconnect.')); }
 });
 
 async function getMedicalAIResponse(userMessage) {
@@ -331,86 +270,96 @@ async function getMedicalAIResponse(userMessage) {
     }
 }
 
-function adminChat(targetId) {
+async function adminChat(targetId) {
     if (typeof targetId !== 'string') return null;
     const connected = Object.hasOwn(activeChats, targetId) ? activeChats[targetId] : null;
     const accountId = connected ? connected.accountId : targetId;
-    if (!Object.hasOwn(database.chats, accountId)) return null;
+    const saved = await storage.getChat(accountId);
+    if (!saved) return null;
     return {
         accountId,
-        saved: database.chats[accountId],
+        saved,
         connections: Object.entries(activeChats).filter(([, chat]) => chat.accountId === accountId)
     };
 }
 
-function chatSummary(accountId) {
-    const chat = adminChat(accountId);
-    const user = database.users.find((entry) => entry.id === accountId);
-    if (!chat || !user) return null;
+function summaryFromRow(row) {
+    const { user, displayName, messageCount } = row;
+    const connections = Object.values(activeChats).filter((chat) => chat.accountId === user.id);
     const reason = hiddenReason(user);
     return {
-        userId: accountId,
-        displayName: chat.saved.displayName,
-        online: chat.connections.length > 0,
-        messageCount: chat.saved.messages.length,
-        humanTakeover: chat.connections.some(([, connected]) => connected.humanTakeover),
+        userId: user.id,
+        displayName,
+        online: connections.length > 0,
+        messageCount,
+        humanTakeover: connections.some((connected) => connected.humanTakeover),
         lastLoginAt: user.lastLoginAt,
         hidden: Boolean(reason),
         hiddenReason: reason
     };
 }
 
-function developerChatLists() {
-    const all = Object.keys(database.chats).map(chatSummary).filter(Boolean);
+async function chatSummary(accountId) {
+    const [user, chat] = await Promise.all([storage.getUser(accountId), storage.getChat(accountId)]);
+    return user && chat ? summaryFromRow({ user, displayName: chat.displayName, messageCount: chat.messages.length }) : null;
+}
+
+async function developerChatLists() {
+    const all = (await storage.summaries()).map(summaryFromRow);
     return { visible: all.filter((chat) => !chat.hidden), hidden: all.filter((chat) => chat.hidden) };
 }
 
-function broadcastChatList() {
+async function broadcastChatList() {
     // Only authenticated developer sockets join this room.
-    const lists = developerChatLists();
+    if (!io.sockets.adapter.rooms.get('admins')?.size) return;
+    const lists = await developerChatLists();
     io.to('admins').emit('saved_chats', lists.visible);
     io.to('admins').emit('developer_chats', lists);
 }
 
 // Refresh open dashboards as the inactivity window expires, without deleting records.
 setInterval(() => {
-    if (io.sockets.adapter.rooms.get('admins')?.size) broadcastChatList();
+    broadcastChatList().catch(() => console.error('Could not refresh developer chat list.'));
 }, 60 * 1000).unref();
 
 io.on('connection', (socket) => {
+    function onAsync(name, handler) {
+        socket.on(name, (...args) => {
+            Promise.resolve().then(() => handler(...args)).catch(() => {
+                console.error('Chat operation failed:', name);
+                const acknowledge = args[args.length - 1];
+                if (typeof acknowledge === 'function') acknowledge({ success: false, error: 'تعذر حفظ التغيير. حاول مجدداً.' });
+                socket.emit('chat_error', 'تعذر الاتصال بقاعدة البيانات. حاول مجدداً.');
+            });
+        });
+    }
+    async function initializeChat() {
     if (socket.role === 'admin') {
         socket.join('admins');
         socket.emit('active_users', Object.entries(activeChats).map(([userId, chat]) => ({
             userId,
             displayName: chat.displayName
         })));
-        const lists = developerChatLists();
-        socket.emit('saved_chats', lists.visible);
-        socket.emit('developer_chats', lists);
-
-        socket.on('admin_set_user_visibility', (data, acknowledge) => {
+        onAsync('admin_set_user_visibility', async (data, acknowledge) => {
             const reply = (value) => { if (typeof acknowledge === 'function') acknowledge(value); };
             if (!data || typeof data.userId !== 'string' || typeof data.hidden !== 'boolean') {
                 return reply({ success: false, error: 'الطلب غير صالح.' });
             }
-            const user = database.users.find((entry) => entry.id === data.userId);
+            const user = await storage.getUser(data.userId);
             if (!user) return reply({ success: false, error: 'المستخدم غير موجود.' });
             // This only changes dashboard visibility. Passwords and chats remain intact.
-            const previous = user.developerHidden;
-            user.developerHidden = data.hidden;
+            let updated;
             try {
-                persistDatabase();
+                updated = await storage.setUserFields(user.id, { developerHidden: data.hidden });
             } catch {
-                if (previous === undefined) delete user.developerHidden;
-                else user.developerHidden = previous;
                 return reply({ success: false, error: 'تعذّر حفظ التغيير. حاول مجدداً.' });
             }
-            broadcastChatList();
-            reply({ success: true, stillInactive: hiddenReason(user) === 'inactive' });
+            await broadcastChatList();
+            reply({ success: true, stillInactive: hiddenReason(updated) === 'inactive' });
         });
 
-        socket.on('load_admin_chat', (userId) => {
-            const chat = adminChat(userId);
+        onAsync('load_admin_chat', async (userId) => {
+            const chat = await adminChat(userId);
             if (chat) {
                 const humanTakeover = chat.connections.some(([, connected]) => connected.humanTakeover);
                 socket.emit('admin_chat_history', {
@@ -421,9 +370,9 @@ io.on('connection', (socket) => {
             }
         });
 
-        socket.on('admin_set_takeover', (data) => {
+        onAsync('admin_set_takeover', async (data) => {
             if (!data || typeof data.userId !== 'string' || typeof data.enabled !== 'boolean') return;
-            const chat = adminChat(data.userId);
+            const chat = await adminChat(data.userId);
             if (!chat || !chat.connections.length) return;
             for (const [connectionId, connected] of chat.connections) {
                 connected.humanTakeover = data.enabled;
@@ -436,93 +385,98 @@ io.on('connection', (socket) => {
             });
         });
 
-        socket.on('admin_message', (data, acknowledge) => {
+        onAsync('admin_message', async (data, acknowledge) => {
             const reply = (result) => { if (typeof acknowledge === 'function') acknowledge(result); };
             if (!data || typeof data.userId !== 'string' || typeof data.text !== 'string' || !data.text.trim()) {
                 reply({ success: false, error: 'اختر محادثة واكتب رسالة.' });
                 return;
             }
-            const chat = adminChat(data.userId);
+            const chat = await adminChat(data.userId);
             if (!chat) {
                 reply({ success: false, error: 'المحادثة غير موجودة.' });
                 return;
             }
             const message = { sender: 'Developer', text: data.text.trim().slice(0, 4000) };
-            chat.saved.messages.push(message);
+            let saved;
             try {
-                persistDatabase();
-            } catch (error) {
-                chat.saved.messages.pop();
-                console.error('Failed to save developer reply:', error.message);
+                saved = await storage.appendMessage(chat.accountId, message);
+            } catch {
+                console.error('Failed to save developer reply.');
                 reply({ success: false, error: 'تعذر حفظ الرد. حاول مرة أخرى.' });
                 return;
             }
+            reply({ success: true });
             for (const [connectionId] of chat.connections) io.to(connectionId).emit('receive_message', message);
             io.to('admins').emit('update_admin_chat', {
                 userId: data.userId,
                 accountId: chat.accountId,
-                displayName: chat.saved.displayName,
-                messages: chat.saved.messages,
-                summary: chatSummary(chat.accountId)
+                displayName: saved.displayName,
+                messages: saved.messages,
+                summary: await chatSummary(chat.accountId)
             });
-            reply({ success: true });
         });
+        const lists = await developerChatLists();
+        if (!socket.connected) return;
+        socket.emit('saved_chats', lists.visible);
+        socket.emit('developer_chats', lists);
         return;
     }
 
-    const savedChat = database.chats[socket.accountId] || { displayName: socket.accountName, messages: [] };
-    savedChat.displayName = socket.accountName;
-    database.chats[socket.accountId] = savedChat;
+    const savedChat = socket.savedChat;
+    delete socket.savedChat;
+    if (!savedChat || !socket.connected) { socket.disconnect(true); return; }
     activeChats[socket.id] = {
         accountId: socket.accountId,
         displayName: socket.accountName,
-        messages: savedChat.messages,
         humanTakeover: Object.values(activeChats).some((chat) => chat.accountId === socket.accountId && chat.humanTakeover)
     };
-    persistDatabase();
     socket.emit('chat_history', savedChat.messages);
     socket.emit('takeover_state', activeChats[socket.id].humanTakeover);
     io.to('admins').emit('new_user', { userId: socket.id, displayName: socket.accountName });
-    broadcastChatList();
+    broadcastChatList().catch(() => console.error('Could not update connected chat list.'));
 
-    socket.on('user_message', async (text) => {
+    onAsync('user_message', async (text, acknowledge) => {
         const userId = socket.id;
         const chat = activeChats[userId];
         if (!chat || typeof text !== 'string' || !text.trim()) return;
 
         const message = { sender: 'user', text: text.trim().slice(0, 4000) };
-        chat.messages.push(message);
-        persistDatabase();
-        io.to('admins').emit('update_admin_chat', { userId, accountId: chat.accountId, displayName: chat.displayName, messages: chat.messages, summary: chatSummary(chat.accountId) });
+        const saved = await storage.appendMessage(chat.accountId, message);
+        if (typeof acknowledge === 'function') acknowledge({ success: true });
+        io.to('admins').emit('update_admin_chat', { userId, accountId: chat.accountId, displayName: chat.displayName, messages: saved.messages, summary: await chatSummary(chat.accountId) });
 
         if (!chat.humanTakeover) {
             const aiReply = await getMedicalAIResponse(message.text);
             const reply = { sender: 'AI', text: aiReply };
-            chat.messages.push(reply);
-            persistDatabase();
+            const updated = await storage.appendMessage(chat.accountId, reply);
 
             socket.emit('receive_message', reply);
-            io.to('admins').emit('update_admin_chat', { userId, accountId: chat.accountId, displayName: chat.displayName, messages: chat.messages, summary: chatSummary(chat.accountId) });
+            io.to('admins').emit('update_admin_chat', { userId, accountId: chat.accountId, displayName: chat.displayName, messages: updated.messages, summary: await chatSummary(chat.accountId) });
         }
     });
 
+    }
     socket.on('disconnect', () => {
         if (activeChats[socket.id]) {
             io.to('admins').emit('user_disconnected', socket.id);
             delete activeChats[socket.id];
-            broadcastChatList();
+            broadcastChatList().catch(() => console.error('Could not update disconnected chat list.'));
         }
     });
+    initializeChat().catch(() => { console.error('Could not load saved conversation.'); socket.disconnect(true); });
 });
 
 app.use(express.static(path.join(__dirname, 'docs')));
 
-app.get('/api/health', (req, res) => {
-    res.json({ service: 'sami-says', status: 'ok', adminConfigured: Boolean(ADMIN_PASSWORD), aiConfigured: Boolean(groq) });
+app.get('/api/health', async (req, res) => {
+    try {
+        await storage.health();
+        res.json({ service: 'sami-says', status: 'ok', storage: storage.kind, adminConfigured: Boolean(ADMIN_PASSWORD), aiConfigured: Boolean(groq) });
+    } catch { res.status(503).json({ service: 'sami-says', status: 'unavailable', storage: storage.kind }); }
 });
 
 app.use((error, req, res, next) => {
-    console.error('Request Error:', error);
+    console.error('Request failed:', error.code || 'internal');
     if (res.headersSent) return next(error);
     const status = Number.isInteger(error.statusCode) && error.statusCode >= 400 && error.statusCode < 500
         ? error.statusCode
@@ -533,3 +487,9 @@ app.use((error, req, res, next) => {
 });
 
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+process.once('SIGTERM', () => {
+    io.close(() => { storage.close().finally(() => process.exit(0)); });
+    setTimeout(() => process.exit(0), 10000).unref();
+});
+}
+main().catch(() => { console.error('Server startup failed. Check database configuration and migrations.'); process.exitCode = 1; });

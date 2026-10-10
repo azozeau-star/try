@@ -89,6 +89,7 @@
             let activeHumanTakeover = false;
             let activeOnline = false;
             let sending = false;
+            socket.on('chat_error', (message) => { document.getElementById('chat-status').textContent = message; });
             const savedChats = new Map();
             let showHidden = false;
             for (const [id, hidden] of [['visible-tab', false], ['hidden-tab', true]]) {

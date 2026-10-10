@@ -547,6 +547,7 @@
             socket.on('connect_error', () => {
                 if (currentUser) showNotification('تعذّر الاتصال. تحقق من الشبكة ثم أعد المحاولة.');
             });
+            socket.on('chat_error', (message) => showNotification(message));
             Sami.request('/api/me')
                 .then((result) => {
                     if (result.authenticated && result.role === 'user') showApplication(result.user);
@@ -636,13 +637,24 @@
                 chat.scrollTop = chat.scrollHeight;
             }
 
+            let sendingMessage = false;
             function send() {
                 const text = input.value.trim();
-                if (!currentUser || !text) return;
+                if (!currentUser || !text || sendingMessage) return;
                 if (!socket.connected) { showNotification('انتظر حتى يتم الاتصال بالدردشة ثم أعد الإرسال.'); return; }
-                append('user', text);
-                socket.emit('user_message', text);
-                input.value = '';
+                sendingMessage = true;
+                document.getElementById('send-button').disabled = true;
+                socket.timeout(15000).emit('user_message', text, (error, result) => {
+                    sendingMessage = false;
+                    document.getElementById('send-button').disabled = false;
+                    if (error || !result || !result.success) {
+                        showNotification(error ? 'لم يصل تأكيد الحفظ. تحقق من سجل المحادثة قبل إعادة الإرسال؛ النص ما زال موجوداً.'
+                            : 'تعذر حفظ الرسالة. النص ما زال موجوداً، حاول مجدداً.');
+                        return;
+                    }
+                    append('user', text);
+                    if (input.value.trim() === text) input.value = '';
+                });
             }
 
             document.getElementById('send-button').addEventListener('click', send);

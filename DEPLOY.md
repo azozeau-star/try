@@ -50,9 +50,19 @@ Each visible user has a `حذف` button that only hides the user from the develo
 
 Sign-in dates and visibility settings are stored in the same account database as the chats and require persistent storage to survive instance replacement.
 
-### Keep accounts and chats after redeployment
+### Neon database (configured production storage)
 
-The app still uses a JSON file, not a managed database. Render's free service has ephemeral storage: accounts/chats can disappear after redeployment or replacement of the instance.
+Production uses Neon PostgreSQL for users, password hashes, saved conversations, developer visibility, sign-in dates, and session hashes. Set `DATABASE_URL` privately on Render to the pooled Neon connection string, with TLS verification enabled. The browser never receives the connection string. With this variable set, the app uses PostgreSQL exclusively and fails startup if the database/schema is unavailable; it never falls back to temporary files or reimports an old snapshot.
+
+Schema changes are tracked in `migrations/001-storage.sql`. On a fresh database, set a private direct `DATABASE_URL_UNPOOLED` and run `npm run db:migrate`. To import an existing private JSON backup, run `npm run db:migrate -- /absolute/path/accounts.json`. The import is transactional, preserves IDs/password hashes/history/visibility, ignores old sessions, and does not overwrite existing accounts or newer messages if repeated. Test migrations on a separate Neon branch first. Never publish backups or either connection URL.
+
+Render may still sleep or restart on the free plan; PostgreSQL storage stays separate from those instances. Users receive saved offline replies when they reconnect. Messages are appended atomically so concurrent replies do not overwrite one another. The app confirms writes only after the database saves them and keeps browser drafts when confirmation fails. Free hosting/database usage limits still apply.
+
+For local development, leaving `DATABASE_URL` unset retains the original JSON file storage. `npm test` checks both the app flows and PostgreSQL migration/storage operations using a local PostgreSQL engine.
+
+### JSON storage alternative
+
+When `DATABASE_URL` is unset, the app uses a JSON file. Render's free service has ephemeral storage: accounts/chats can disappear after redeployment or replacement of the instance.
 
 To restore an existing account backup on an empty instance, set `INITIAL_DATA_JSON` privately in the backend's environment to the JSON account database. Never commit this value, password hashes, or chat history to GitHub. The server preserves existing files, imports the backup only when the data file is absent, and discards old sessions so users must sign in again. This restores the original snapshot after a reset; newer accounts and messages still require persistent storage.
 
